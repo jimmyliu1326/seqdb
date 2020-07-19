@@ -233,6 +233,7 @@ if [[ $1 == "build_db" ]]; then
         exit 0
     fi
     opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
+    if [ $? != 0 ] ; then echo "build_db: Invalid arguements used, exiting"; build_dbusage; exit 1 ; fi
     eval set -- "$opts"
 
     while true; do
@@ -256,6 +257,7 @@ elif [[ $1 == "extract" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
+    if [ $? != 0 ] ; then echo "extract: Invalid arguements used, exiting"; extract_usage; exit 1 ; fi
     eval set -- "$opts"
 
     while true; do
@@ -278,6 +280,7 @@ elif [[ $1 == "remove" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
+    if [ $? != 0 ] ; then echo "remove: Invalid arguements used, exiting"; remove_usage; exit 1 ; fi
     eval set -- "$opts"
 
     while true; do
@@ -300,6 +303,7 @@ elif [[ $1 == "insert" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
+    if [ $? != 0 ] ; then echo "insert: Invalid arguements used, exiting"; insert_usage; exit 1 ; fi
     eval set -- "$opts"
 
     while true; do
@@ -323,6 +327,7 @@ elif [[ $1 == "replace" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
+    if [ $? != 0 ] ; then echo "replace: Invalid arguements used, exiting"; replace_usage; exit 1 ; fi
     eval set -- "$opts"
 
     while true; do

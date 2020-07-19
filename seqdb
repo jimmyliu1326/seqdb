@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+
+script_usage() {
+
+echo "
+seqdb [subcommand] [options]
+
+Available subcommands:
+    build_db    construct a local sequence database
+    extract     retrieve a target sequence from database
+    remove      remove an existing target from database
+    insert      add a new sequence to database
+    replace     replace sequence of an existing target with a new sequence
+"
+}
+
+build_db_usage() {
+
+echo "
+seqdb build_db [options]
+
+Required arguments:
+-i|--input          Path to input parent directory with subfolders representing individual samples
+-o|--output         Path to output sequence database
+
+Optional arguments:
+-h|--help   Display help message
+"
+}
+
+extract_usage() {
+
+echo "
+seqdb extract [options]
+
+Required arguments:
+-q|--query      Query sample ID
+-d|--db         Path to sequence database
+"
+}
+
+remove_usage() {
+
+echo "
+seqdb remove [options]
+
+Required arguments:
+-q|--query      Query sample ID
+-d|--db         Path to sequence database
+"
+}
+
+replace_usage() {
+
+echo "
+seqdb replace [options]
+
+Required arguments:
+-q|--query      Query sample ID
+-i|--input      Path to new sequence file in fasta format
+-d|--db         Path to sequence database
+"
+}
+
+insert_usage() {
+
+echo "
+seqdb extract [options]
+
+Required arguments:
+-q|--query      Input sample ID
+-i|--input      Path to input sequence file in fasta format
+-d|--db         Path to sequence database
+"
+}
+
+# check depedencies
+dependency_check() {
+
+    # seqkit
+    seqkit -h > /dev/null
+    if [[ $(echo $?) -ne 0 ]]; then
+        echo "Seqkit cannot be called, check its installation, exiting"
+        exit 1
+    fi
+
+}
+
+# build database
+build_db() {
+
+    # $1    input parent directory path
+    # $2    output database path
+
+    ## check integrity of input file structure
+    echo "build_db: Checking integrity of input file structure..."
+
+    # directory
+    if [[ ! -d $1 ]]; then
+        echo "build_db: Input path is not a directory, exiting"
+    fi
+
+    # subfolders
+    samples_n=$(ls -d $1/*/ | wc -l)
+    
+    if [[ $samples_n -eq 0 ]]; then
+        echo "build_db: No subfolders found under ${1}, exiting"
+    else
+        echo "build_db: Total samples found: $samples_n"
+    fi
+
+    ## construct db
+    echo "build_db: Constructing local sequence database..."
+
+    for dir in $(ls -d $1/*/); do
+        # get sample id
+        sample_id=$(echo $(basename $dir))
+
+        # check fasta file
+        if test -f $dir/$sample_id.fasta; then
+            # append sample ID to fasta headers and insert entry to database
+            cat $dir/$sample_id.fasta | sed "/>/ s/^>/>${sample_id};/g" >> $2
+        else
+            echo "$sample_id.fasta not found under $dir"
+        fi
+    done
+
+    # index database
+    seqkit faidx $2
+
+    # database versioning control
+
+    echo "build_db: Local sequence database built at $2"    
+
+}
+
+extract() {
+
+    # $1    Sample ID
+    # $2    Database path
+
+    # check sample ID
+    if test -f $2; then
+        #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit faidx -r $2 "${1};" | grep ">" | wc -l) -eq 0 ]]; then
+        echo "extract: Query sample ID not found, exiting"
+        else
+            if test -f $2; then
+                seqkit grep -rp "${1};" $2
+                #seqkit grep -rp $1 $2 | seqkit fx2tab | awk 'BEGIN{FS=OFS="\t"} {$1 = $1 OFS $1} 1' | awk 'BEGIN{FS=OFS="\t"} {gsub(/;.*/,"",$1); print}' | awk -v var="$1" '$1==var' | cut -f1 --complement -d$'\t' | seqkit tab2fx
+            else
+                echo "extract: Path to Database does not exist, exiting"
+            fi
+        fi
+    else
+        echo "extract: Path to Database does not exist, exiting"
+        exit 1
+    fi
+
+}
+
+insert() {
+
+    # $1 Sample ID
+    # $2 Input FASTA path
+    # $3 Database path
+
+    # check sample ID
+    if test -f $3; then
+        #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit faidx -r $2 "${1};" | grep ">" | wc -l) -eq 0 ]]; then
+            if test -f $2; then
+            cat $2 | sed "/>/ s/^>/>$1;/g" >> $3
+            else
+                echo "insert: Input FASTA file not found, exiting"
+                exit 1
+            fi
+        else
+            echo "insert: The input sample ID already exists in the database, use replace subcommand instead, exiting"
+        fi
+    else
+        echo "insert: Path to Database does not exist, exiting"
+        exit 1
+    fi
+
+}
+
+remove() {
+
+    # $1 Sample ID
+    # $2 Database path
+
+    if test -f $2; then
+        if [[ $(seqkit faidx -r $2 "${1};" | grep ">" | wc -l) -eq 0 ]]; then
+            echo "remove: Query sample ID not found, exiting"
+        else
+            echo "remove: Deleting $1 from $2"
+            seqkit grep -v -rp "${1};" $2 > $2
+        fi
+    else
+        echo "remove: Path to Database does not exist, exiting"
+        exit 1
+    fi
+}
+
+replace() {
+
+    # $1 Sample ID
+    # $2 Input FASTA path
+    # $3 Database path
+
+    echo "replace: Modifying $1 in $3"
+    remove $1 $3
+    insert $1 $2 $3
+
+}
+
+# parse arguments
+if [[ $# -eq 0 || $1 =~ ^(--help|-h) ]]; then
+    script_usage
+    exit 0
+elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert)$ ]]; then
+    echo "Invalid subcommand given"
+    script_usage
+    exit 1
+fi
+
+# parse subcommands
+if [[ $1 == "build_db" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        build_db_usage
+        exit 0
+    fi
+    opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            -o|--output) OUTPUT_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) build_db_usage; exit 0;;
+        esac
+    done
+
+    # call build_db function
+    dependency_check
+    build_db $INPUT_PATH $OUTPUT_PATH
+    
+
+elif [[ $1 == "extract" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        extract_usage
+        exit 0
+    fi
+    opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -q|--query) QUERY=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) extract_usage; exit 0;;
+        esac
+    done
+
+    # call extract function
+    dependency_check
+    extract $QUERY $DB_PATH
+
+elif [[ $1 == "remove" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        remove_usage
+        exit 0
+    fi
+    opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -q|--query) QUERY=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) remove_usage; exit 0;;
+        esac
+    done
+
+    # call remove function
+    dependency_check
+    remove $QUERY $DB_PATH
+
+elif [[ $1 == "insert" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        insert_usage
+        exit 0
+    fi
+    opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -q|--query) QUERY=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) insert_usage; exit 0;;
+        esac
+    done
+
+    # call insert function
+    dependency_check
+    insert $QUERY $INPUT_PATH $DB_PATH
+
+elif [[ $1 == "replace" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        replace_usage
+        exit 0
+    fi
+    opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -q|--query) QUERY=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) replace_usage; exit 0;;
+        esac
+    done
+
+    # call replace function
+    dependency_check
+    replace $QUERY $INPUT_PATH $DB_PATH
+fi
+

@@ -18,13 +18,15 @@ Available subcommands:
 ## Installation
 
 1. Clone the repository
+
 `git clone https://github.com/jimmyliu1326/seqdb.git`
 
 2. Modify file permissions
+
 `chmod +x seqdb/seqdb`
 
-3. Add seqdb to PATH
-Include the following line in ~/.bashrc
+3. Add seqdb to PATH by including the following line in ~/.bashrc
+
 `export PATH = "/path/to/seqdb:$PATH"`
 
 ## Dependecies

@@ -74,18 +74,6 @@ Required arguments:
 "
 }
 
-# check depedencies
-dependency_check() {
-
-    # seqkit
-    seqkit -h > /dev/null
-    if [[ $(echo $?) -ne 0 ]]; then
-        echo "Seqkit cannot be called, check its installation, exiting"
-        exit 1
-    fi
-
-}
-
 # build database
 build_db() {
 
@@ -225,6 +213,14 @@ elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert)$ ]]; then
     exit 1
 fi
 
+## check depedencies
+# seqkit
+seqkit -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "Seqkit cannot be called, check its installation, exiting"
+    exit 1
+fi
+
 # parse subcommands
 if [[ $1 == "build_db" ]]; then
     shift 1
@@ -246,7 +242,6 @@ if [[ $1 == "build_db" ]]; then
     done
 
     # call build_db function
-    dependency_check
     build_db $INPUT_PATH $OUTPUT_PATH
     
 
@@ -270,7 +265,6 @@ elif [[ $1 == "extract" ]]; then
     done
 
     # call extract function
-    dependency_check
     extract $QUERY $DB_PATH
 
 elif [[ $1 == "remove" ]]; then
@@ -293,7 +287,6 @@ elif [[ $1 == "remove" ]]; then
     done
 
     # call remove function
-    dependency_check
     remove $QUERY $DB_PATH
 
 elif [[ $1 == "insert" ]]; then
@@ -317,7 +310,6 @@ elif [[ $1 == "insert" ]]; then
     done
 
     # call insert function
-    dependency_check
     insert $QUERY $INPUT_PATH $DB_PATH
 
 elif [[ $1 == "replace" ]]; then
@@ -341,7 +333,6 @@ elif [[ $1 == "replace" ]]; then
     done
 
     # call replace function
-    dependency_check
     replace $QUERY $INPUT_PATH $DB_PATH
 fi
 

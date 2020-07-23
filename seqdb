@@ -65,7 +65,7 @@ Required arguments:
 insert_usage() {
 
 echo "
-seqdb extract [options]
+seqdb insert [options]
 
 Required arguments:
 -q|--query      Input sample ID

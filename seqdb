@@ -7,6 +7,7 @@ seqdb [subcommand] [options]
 
 Available subcommands:
     build_db    construct a local sequence database
+    unbuild_db  deconstruct a local sequence database
     extract     retrieve a target sequence from database
     remove      remove an existing target from database
     insert      add a new sequence to database
@@ -22,6 +23,20 @@ seqdb build_db [options]
 Required arguments:
 -i|--input          Path to input parent directory with subfolders representing individual samples
 -o|--output         Path to output sequence database
+
+Optional arguments:
+-h|--help   Display help message
+"
+}
+
+unbuild_db_usage() {
+
+echo "
+seqdb unbuild_db [options]
+
+Required arguments:
+-i|--input          Path to input sequence database
+-o|--output         Path to output parent directory with subfolders representing individual samples
 
 Optional arguments:
 -h|--help   Display help message
@@ -74,6 +89,45 @@ Required arguments:
 "
 }
 
+# unbuild database
+unbuild_db() {
+
+    # $1    input database path including database name (*.fasta)
+    # $2    output parent directory path
+
+    ## check integrity of input file structure
+    echo "unbuild_db: Checking integrity of input file structure..."
+
+    # directory
+    if [[ -d $1 ]]; then
+        echo "unbuild_db: Input path is a directory, looking for *.fasta, exiting"
+        exit 1
+    fi
+
+    # index database to make sure it is up-to-date, then use index to extract samples.
+    seqkit faidx $1
+
+    ## deconstruct db
+    echo "unbuild_db: Deconstructing local sequence database from $1..."
+
+    sed "s/\t/\|/g" < $1.fai | while read in; 
+      do 
+        sample=${in%|*}
+        # eg. 1616822_Hp
+        id=${in#*|}
+        id=${id%%|*}  
+        # eg. contig_1_segment0
+
+        if [[ ! -d $2/$sample ]]; then
+            mkdir $2/$sample
+        fi
+        
+        seqdb extract -q $sample -d $1 > $2/$sample/$id.fasta        
+      done 
+
+    echo "unbuild_db: Sample files built at $2"    
+}
+
 # build database
 build_db() {
 
@@ -122,7 +176,6 @@ build_db() {
     # database versioning control
 
     echo "build_db: Local sequence database built at $2"    
-
 }
 
 extract() {
@@ -149,7 +202,6 @@ extract() {
         echo "extract: Path to Database does not exist, exiting"
         exit 1
     fi
-
 }
 
 insert() {
@@ -157,7 +209,6 @@ insert() {
     # $1 Sample ID
     # $2 Input FASTA path
     # $3 Database path
-
 
     if test -f $3; then
         # check sample ID
@@ -177,7 +228,6 @@ insert() {
         echo "insert: Path to Database does not exist, exiting"
         exit 1
     fi
-
 }
 
 remove() {
@@ -208,20 +258,19 @@ replace() {
     echo "replace: Modifying $1 in $3"
     remove $1 $3
     insert $1 $2 $3
-
 }
 
 # parse arguments
 if [[ $# -eq 0 || $1 =~ ^(--help|-h) ]]; then
     script_usage
     exit 0
-elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert)$ ]]; then
+elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db)$ ]]; then
     echo "Invalid subcommand given"
     script_usage
     exit 1
 fi
 
-## check depedencies
+## check dependencies
 # seqkit
 seqkit -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
@@ -237,8 +286,9 @@ if [[ $1 == "build_db" ]]; then
         exit 0
     fi
     opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
-    if [ $? != 0 ] ; then echo "build_db: Invalid arguements used, exiting"; build_dbusage; exit 1 ; fi
     eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "build_db: Invalid arguments used, exiting"; build_dbusage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "build_db: Invalid arguments used, exiting"; build_dbusage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -250,8 +300,32 @@ if [[ $1 == "build_db" ]]; then
     done
 
     # call build_db function
-    build_db $INPUT_PATH $OUTPUT_PATH
-    
+    build_db $INPUT_PATH $OUTPUT_PATH    
+
+elif 
+[[ $1 == "unbuild_db" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        unbuild_db_usage
+        exit 0
+    fi
+    opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
+    if [ $? != 0 ] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_dbusage; exit 1 ; fi
+    eval set -- "$opts"
+    if [[ $1 =~ ^--$ ]] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_dbusage; exit 1 ; fi
+
+    while true; do
+        case "$1" in
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            -o|--output) OUTPUT_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) unbuild_db_usage; exit 0;;
+        esac
+    done
+
+    # call unbuild_db function
+    dependency_check
+    unbuild_db $INPUT_PATH $OUTPUT_PATH
 
 elif [[ $1 == "extract" ]]; then
     shift 1
@@ -260,8 +334,9 @@ elif [[ $1 == "extract" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
-    if [ $? != 0 ] ; then echo "extract: Invalid arguements used, exiting"; extract_usage; exit 1 ; fi
     eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "extract: Invalid arguments used, exiting"; extract_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "extract: Invalid arguments used, exiting"; extract_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -282,8 +357,9 @@ elif [[ $1 == "remove" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d: -l help,db:,query: -- "$@"`
-    if [ $? != 0 ] ; then echo "remove: Invalid arguements used, exiting"; remove_usage; exit 1 ; fi
     eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "remove: Invalid arguments used, exiting"; remove_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "remove: Invalid arguments used, exiting"; remove_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -304,8 +380,9 @@ elif [[ $1 == "insert" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
-    if [ $? != 0 ] ; then echo "insert: Invalid arguements used, exiting"; insert_usage; exit 1 ; fi
     eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "insert: Invalid arguments used, exiting"; insert_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "insert: Invalid arguments used, exiting"; insert_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -327,8 +404,9 @@ elif [[ $1 == "replace" ]]; then
         exit 0
     fi
     opts=`getopt -o hq:d:i: -l help,db:,query:,input: -- "$@"`
-    if [ $? != 0 ] ; then echo "replace: Invalid arguements used, exiting"; replace_usage; exit 1 ; fi
     eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "replace: Invalid arguments used, exiting"; replace_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "replace: Invalid arguments used, exiting"; replace_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -343,4 +421,3 @@ elif [[ $1 == "replace" ]]; then
     # call replace function
     replace $QUERY $INPUT_PATH $DB_PATH
 fi
-

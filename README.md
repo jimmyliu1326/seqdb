@@ -13,6 +13,7 @@ Available subcommands:
     remove      remove an existing target from database
     insert      add a new sequence to database
     replace     replace sequence of an existing target with a new sequence
+    unbuild_db  deconstructs a local sequence database
 ```
 
 ## Installation

@@ -287,8 +287,8 @@ if [[ $1 == "build_db" ]]; then
     fi
     opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
     eval set -- "$opts"
-    if [ $? != 0 ] ; then echo "build_db: Invalid arguments used, exiting"; build_dbusage; exit 1 ; fi
-    if [[ $1 =~ ^--$ ]] ; then echo "build_db: Invalid arguments used, exiting"; build_dbusage; exit 1 ; fi
+    if [ $? != 0 ] ; then echo "build_db: Invalid arguments used, exiting"; build_db_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "build_db: Invalid arguments used, exiting"; build_db_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -299,6 +299,12 @@ if [[ $1 == "build_db" ]]; then
         esac
     done
 
+    # check if required arguments present
+    if [[ -z $INPUT_PATH ]]; then
+        echo "build_db: required argument -i is missing, exiting"; build_db_usage; exit 1
+    elif [[ -z $OUTPUT_PATH ]]; then
+        echo "build_db: required argument -o is missing, exiting"; build_db_usage; exit 1
+    fi
     # call build_db function
     build_db $INPUT_PATH $OUTPUT_PATH    
 
@@ -310,9 +316,9 @@ elif
         exit 0
     fi
     opts=`getopt -o hi:o: -l help,input:,output: -- "$@"`
-    if [ $? != 0 ] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_dbusage; exit 1 ; fi
+    if [ $? != 0 ] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_db_usage; exit 1 ; fi
     eval set -- "$opts"
-    if [[ $1 =~ ^--$ ]] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_dbusage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "unbuild_db: Invalid arguments used, exiting"; unbuild_db_usage; exit 1 ; fi
 
     while true; do
         case "$1" in
@@ -323,8 +329,13 @@ elif
         esac
     done
 
+    # check if required arguments present
+    if [[ -z $INPUT_PATH ]]; then
+        echo "unbuild_db: required argument -i is missing, exiting"; unbuild_db_usage; exit 1
+    elif  [[ -z $OUTPUT_PATH ]]; then
+        echo "unbuild_db: required argument -o is missing, exiting"; unbuild_db_usage; exit 1
+    fi 
     # call unbuild_db function
-    dependency_check
     unbuild_db $INPUT_PATH $OUTPUT_PATH
 
 elif [[ $1 == "extract" ]]; then
@@ -347,6 +358,12 @@ elif [[ $1 == "extract" ]]; then
         esac
     done
 
+    # check if required arguments present
+    if [[ -z $QUERY ]]; then
+        echo "extract: required argument -q is missing, exiting"; extract_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then
+        echo "extract: required argument -d is missing, exiting"; extract_usage; exit 1
+    fi
     # call extract function
     extract $QUERY $DB_PATH
 
@@ -370,6 +387,12 @@ elif [[ $1 == "remove" ]]; then
         esac
     done
 
+    # check if required arguments present
+    if [[ -z $QUERY ]]; then 
+        echo "remove: required argument -q is missing, exiting"; remove_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then
+        echo "remove: required argument -d is missing, exiting"; remove_usage; exit 1;
+    fi
     # call remove function
     remove $QUERY $DB_PATH
 
@@ -394,6 +417,14 @@ elif [[ $1 == "insert" ]]; then
         esac
     done
 
+    # check if required arguments present
+    if [[ -z $QUERY ]]; then
+        echo "insert: required argument -q is missing, exiting"; insert_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then 
+        echo "insert: required argument -d is missing, exiting"; insert_usage; exit 1
+    elif [[ -z $INPUT_PATH ]]; then
+        echo "insert: required argument -i is missing, exiting"; insert_usage; exit 1
+    fi
     # call insert function
     insert $QUERY $INPUT_PATH $DB_PATH
 
@@ -417,6 +448,15 @@ elif [[ $1 == "replace" ]]; then
             -h|--help) replace_usage; exit 0;;
         esac
     done
+
+    # check if required arguments present
+    if [[ -z $QUERY ]]; then 
+        echo "replace: required argument -q is missing, exiting"; replace_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then
+        echo "replace: required argument -q is missing, exiting"; replace_usage; exit 1
+    elif [[ -z $INPUT_PATH ]]; then 
+        echo "replace: required argument -i is missing, exiting"; replace_usage; exit 1
+    fi
 
     # call replace function
     replace $QUERY $INPUT_PATH $DB_PATH

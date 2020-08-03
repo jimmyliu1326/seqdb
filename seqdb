@@ -14,6 +14,7 @@ Available subcommands:
     replace     replace sequence of an existing target with a new sequence
     search      identify significant hits from an existing database given a query sequence
     build_tree  construct a cgSNP tree from closest genomic neighbours in the database
+    kipper      interact with the data archive system
 "
 }
 
@@ -39,6 +40,22 @@ seqdb unbuild_db [options]
 Required arguments:
 -i|--input          Path to input sequence database
 -o|--output         Path to output parent directory with subfolders representing individual samples
+
+Optional arguments:
+-h|--help   Display help message
+"
+}
+
+kipper_usage() {
+
+echo "
+seqdb kipper [options]
+
+Required arguments:
+-b|--backup         Do an incremental backup and create a new version of the archive database
+-l|--list           List versions of the database
+-i|--input          Path to input sequence database (for -b backup)
+-d|--database       Path to archive database (optional if remembered)
 
 Optional arguments:
 -h|--help   Display help message
@@ -278,6 +295,53 @@ search() {
         echo "search: Path to database not found, exiting"; exit 1
     fi
 
+# Use this to set the new config value, needs 2 parameters. 
+function set_config(){
+    echo "DB_PATH=\"$DB_PATH\"" > $cfgpath
+    
+    #sed -i "s/\($1 *= *\).*/\1$2/" $cfgpath
+    #sed -i "s/^\($1\s*=\s*\).*\$/\1$2/" $cfgpath
+}
+
+# Show kipper db versions.
+kipper_listdb() {
+
+     # $1    database path including database name (*.fasta)
+    # directory
+    if [[ -d $1 ]]; then
+        echo "kipper: Input path $1 is a directory, looking for *.fasta, exiting"
+        exit 1
+    fi
+
+    kipper.py $1 -l
+}
+
+# Perform archival functions.
+kipper_backup() {
+
+    # $1    input database path including database name (*.fasta)
+    # $2    output sequence database
+
+    ## check integrity of input file structure
+    echo "kipper: Perform archival function..."
+
+    # directory
+    if [[ -d $1 ]]; then
+        echo "kipper: Input path $1 is a directory, looking for *.fasta, exiting"
+        exit 1
+    fi
+ 
+    foo="kipper.py $2 -l"
+    fooIn=$($foo)
+
+    kipper.py $2 -i $1 -o.
+    
+    fooOut=$($foo)
+    if [ "$fooIn" = "$fooOut" ]; then
+        echo "kipper: No changes"
+    else
+        echo "kipper: Backup complete"
+    fi
 }
 
 # unbuild database
@@ -384,19 +448,20 @@ extract() {
         # check sample ID
         #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
         if [[ $(seqkit faidx -r $2 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
-        echo "extract: Query sample ID not found, exiting"
-        exit 1
+            # 1>&2 redirect echo output to stderr
+            echo "extract: Query sample ID not found, exiting" 1>&2
+            exit 1
         else
             if test -f $2; then
                 seqkit grep -rp "${1}\|" $2
                 #seqkit grep -rp $1 $2 | seqkit fx2tab | awk 'BEGIN{FS=OFS="\t"} {$1 = $1 OFS $1} 1' | awk 'BEGIN{FS=OFS="\t"} {gsub(/;.*/,"",$1); print}' | awk -v var="$1" '$1==var' | cut -f1 --complement -d$'\t' | seqkit tab2fx
             else
-                echo "extract: Path to Database does not exist, exiting"
+                echo "extract: Path to Database $2 does not exist, exiting" 1>&2
                 exit 1
             fi
         fi
     else
-        echo "extract: Path to Database does not exist, exiting"
+        echo "extract: Path to Database $2 does not exist, exiting" 1>&2
         exit 1
     fi
 }
@@ -409,10 +474,13 @@ insert() {
 
     if test -f $3; then
         # check sample ID
-        #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
-        if [[ $(seqkit faidx -r $2 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
+        #if [[ $(seqkit faidx -r $3 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit faidx -r $3 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
             if test -f $2; then
-            cat $2 | sed "/>/ s/^>/>$1|/g" >> $3
+                echo "insert: Inserting $1 from $2 into $3"
+                cat $2 | sed "/>/ s/^>/>$1|/g" >> $3
+                # Invalidate the index by deleting it.
+                rm $3.fai                
             else
                 echo "insert: Input FASTA file not found, exiting"
                 exit 1
@@ -422,7 +490,7 @@ insert() {
             exit 1
         fi
     else
-        echo "insert: Path to Database does not exist, exiting"
+        echo "insert: Path to Database $3 does not exist, exiting"
         exit 1
     fi
 }
@@ -438,10 +506,14 @@ remove() {
             exit 1
         else
             echo "remove: Deleting $1 from $2"
-            seqkit grep -v -rp "${1}|" $2 > $2
+            seqkit grep -v -rp "${1}\|" $2 > tmp.fasta
+            # $2 gets set to zero length if redirected directly.
+            mv tmp.fasta $2
+            # Invalidate the index by deleting it.
+            rm $2.fai
         fi
     else
-        echo "remove: Path to Database does not exist, exiting"
+        echo "remove: Path to Database $2 does not exist, exiting"
         exit 1
     fi
 }
@@ -461,7 +533,7 @@ replace() {
 if [[ $# -eq 0 || $1 =~ ^(--help|-h) ]]; then
     script_usage
     exit 0
-elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|search|build_tree)$ ]]; then
+elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|search|build_tree)$ ]]; then
     echo "Invalid subcommand given"
     script_usage
     exit 1
@@ -546,6 +618,76 @@ elif
     fi 
     # call unbuild_db function
     unbuild_db $INPUT_PATH $OUTPUT_PATH
+
+elif 
+[[ $1 == "kipper" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        kipper_usage
+        exit 0
+    fi
+    opts=`getopt -o hbli:d: -l help,backup,list,input:,database: -- "$@"`
+    if [ $? != 0 ] ; then echo "kipper: Invalid arguments used, exiting"; kipper_usage; exit 1 ; fi
+    eval set -- "$opts"
+    if [[ $1 =~ ^--$ ]] ; then echo "kipper: Invalid arguments used, exiting"; kipper_usage; exit 1 ; fi
+
+    backup=false
+    listdb=false
+    while true; do
+        case "$1" in
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            -d|--database) DB_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) kipper_usage; exit 0;;
+            -b|--backup) backup=true; shift 1;;
+            -l|--list) listdb=true; shift 1;;
+        esac
+    done
+
+    if [ "$listdb" = true ]; then
+        # check if required arguments present
+        if [[ -z $DB_PATH ]]; then
+            echo "kipper: required argument -d is missing, exiting"; kipper_usage; exit 1
+        fi 
+
+        # call kipper backup function
+        kipper_listdb $DB_PATH 
+    fi
+
+    if [ "$backup" = true ]; then
+        # check if required arguments present
+        if [[ -z $INPUT_PATH ]]; then
+            echo "kipper: required argument -i is missing, exiting"; kipper_usage; exit 1
+        elif  [[ -z $DB_PATH ]]; then
+            # TODO: first look for remembered db path and use if available.
+            cfgpath=$(dirname $INPUT_PATH)"/kipper.cfg"
+
+            # INITIALIZE CONFIG IF IT'S MISSING
+            if [ ! -e "${cfgpath}" ] ; then
+                echo "kipper: required argument -d is missing, exiting"; kipper_usage; exit 1
+            fi
+        fi 
+
+        cfgpath=$(dirname $INPUT_PATH)"/kipper.cfg"
+        if [ ! -e "${cfgpath}" ] ; then
+            # Set default variable value
+            touch $cfgpath
+            echo "DB_PATH=\"$DB_PATH\"" > $cfgpath
+        fi
+
+        if  [[ -z $DB_PATH ]]; then
+            # LOAD FROM THE CONFIG FILE
+            source $cfgpath
+            if [[ -z $DB_PATH ]]; then
+                echo "kipper: required argument -d is missing from config file $cfgpath, exiting"; kipper_usage; exit 1
+            fi
+        fi
+        set_config "DB_PATH" $DB_PATH # SETS THE NEW VALUE         
+        
+        # call kipper backup function
+        #echo "Call Kipper $DB_PATH -i $INPUT_PATH -o."
+        kipper_backup $INPUT_PATH $DB_PATH 
+    fi
 
 elif [[ $1 == "extract" ]]; then
     shift 1

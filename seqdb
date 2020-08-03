@@ -12,6 +12,8 @@ Available subcommands:
     remove      remove an existing target from database
     insert      add a new sequence to database
     replace     replace sequence of an existing target with a new sequence
+    search      identify significant hits from an existing database given a query sequence
+    build_tree  construct a cgSNP tree from closest genomic neighbours in the database
 "
 }
 
@@ -89,6 +91,195 @@ Required arguments:
 "
 }
 
+search_usage() {
+
+echo "
+seqdb search [options]
+
+Required arguments:
+-q|--query      Input sample ID
+-i|--input      Path to input sequence file in fasta format
+-d|--db         Path to sequence database
+-o|--output     Path to output results
+
+Optional arguments:
+-c|--cutoff     Filter results by a maximum distance cutoff [Default: 0]
+                Ranges from 0 to 1
+-t|--threads    Number of threads used [Default: 1]
+"
+}
+
+build_tree_usage() {
+
+echo "
+seqdb build_tree [options]
+
+Required arguments:
+-l|--list             List containing path to each query sequence per line (Must be absolute paths)
+-o|--output           Path to output directory
+-d|--db               Path to sequence database
+-r|--reference        Path to reference sequence
+
+Optional arguments:
+-t|--threads          Number of threads used [Default: 1]
+-n                    Number of top hits to include per query [Default: 50]
+
+"
+}
+
+# construct SNP tree from significant hits and query sequences
+build_tree() {
+
+    # $1    input list file
+    # $2    path to output directory
+    # $3    path to database
+    # $4    path to reference sequence
+    # $5    number of threads
+    # $6    number of hits to include per query
+
+    # set up output dir structure
+    mkdir -p $2/mash_res
+    mkdir -p $2/phame/ref_dir
+    mkdir -p $2/phame/work_dir
+
+
+    # search for top hits
+    if test -f $1; then
+
+        echo "build_tree: Estimating k-mer distance..."
+        while read lines; do
+            if test -f $lines; then
+            
+                # get filename
+                filename=$(basename $lines)
+
+                # estimate kmer distance
+                search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 > /dev/null
+
+                # filter top hits
+                head -n $6 $2/mash_res/${filename%.*}.tsv | cut -f1 -d' ' > $2/mash_res/${filename%.*}.hits
+            else
+                echo "build_tree: $lines from the input list was not found, exiting"; exit 1
+            fi
+        done < $1
+
+        # consolidate top hits, keep unique hits only
+        cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list
+
+        ## set up input directory for SNP tree
+
+        #query
+        while read lines; do
+            # get filename
+            filename=$(basename $lines)
+            ln -s $lines $2/phame/work_dir/$filename
+        done < $1
+
+        # database hits
+        while read lines; do
+            # get sequence from database
+            extract $lines $3 > $2/phame/work_dir/$lines.fasta
+        done < $2/db_top_hits.list
+
+        # reference sequence
+        if test -f $4; then
+            ln -s $(realpath $4) $2/phame/ref_dir/$(basename $4)
+        else
+            echo "build_tree: Input reference sequence was not found, exiting"; exit 1
+        fi
+
+        ## set up phame.ctl file
+        echo "refdir = $(realpath $2)/phame/ref_dir" > $2/phame.ctl
+        echo "workdir = $(realpath $2)/phame/work_dir" >> $2/phame.ctl
+        echo "reference = 1" >> $2/phame.ctl
+        echo "reffile = $(basename $4)" >> $2/phame.ctl
+        echo "project = database_search" >> $2/phame.ctl
+        echo "cdsSNPS = 0" >> $2/phame.ctl
+        echo "buildSNPdb = 0" >> $2/phame.ctl
+        echo "SNPsfilter = 0.6" >> $2/phame.ctl
+        echo "FirstTime = 1" >> $2/phame.ctl
+        echo "data = 3" >> $2/phame.ctl
+        echo "reads = 1" >> $2/phame.ctl
+        echo "aligner = minimap2" >> $2/phame.ctl
+        echo "tree = 1" >> $2/phame.ctl
+        echo "bootstrap = 1" >> $2/phame.ctl
+        echo "N = 100" >> $2/phame.ctl
+        echo "PosSelect = 0" >> $2/phame.ctl
+        echo "code = 0" >> $2/phame.ctl
+        echo "clean = 1" >> $2/phame.ctl
+        echo "threads = $5" >> $2/phame.ctl
+        echo "cutoff = 0.1" >> $2/phame.ctl
+
+        # run phame
+        echo "Constructing cgSNP tree"
+        phame $2/phame.ctl
+
+        # clean up
+        mv $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
+        rm -rf $2/phame
+        rm -rf $2/mash_res
+        rm $2/*.list
+        rm $2/*.ctl
+        
+
+    else
+        echo "build_tree: Input list was not found, exiting"; exit 1
+    fi   
+        
+
+
+}
+
+# search database for hits
+search() {
+
+    # $1    input sample ID
+    # $2    input sequence file path
+    # $3    path to DB
+    # $4    path to results
+    # $5    distance cutoff
+    # $6    threads
+
+    echo "search: Searching $1 against $3"
+
+    if test -f $3; then
+        if test -d $(dirname $3)/sketches; then
+            if test -f $2; then
+
+                # create query k-mer profile
+                mash sketch -s 10000 $2 -o $(dirname $4)/$1 2> /dev/null
+
+                # create empty output file
+                touch $4
+
+                # estimate mash distance
+                for sketch in $(dirname $3)/sketches/*.msh; do
+                    mash dist $sketch $(dirname $4)/$1.msh -d $5 -p $6 >> $4
+                done
+
+                # remove query k-mer profile
+                rm $(dirname $4)/$1.msh
+
+                # format output
+                awk 'gsub(/.*\//, "", $1)' $4 > $4.tmp && mv $4.tmp $4
+                awk 'gsub(/.*\//, "", $2)' $4 > $4.tmp && mv $4.tmp $4
+                sed -e 's/.fasta//g' -e 's/.fna//g' -e 's/.fa//g' $4 > $4.tmp && mv $4.tmp $4
+                sort -gk3 $4 > $4.tmp && mv $4.tmp $4
+
+                echo "search: Output wrote to: $4"
+
+            else
+                echo "search: Path to input sequence file not found, exiting"; exit 1
+            fi
+        else
+            echo "search: Mash sketches was not found in the same directory as the sequence database"; exit 1
+        fi
+    else
+        echo "search: Path to database not found, exiting"; exit 1
+    fi
+
+}
+
 # unbuild database
 unbuild_db() {
 
@@ -153,8 +344,9 @@ build_db() {
         echo "build_db: Total samples found: $samples_n"
     fi
 
-    ## construct db
+    ## construct sequence db
     echo "build_db: Constructing local sequence database..."
+    mkdir -p $(dirname $2)/sketches
 
     for dir in $(ls -d $1/*/); do
         # get sample id
@@ -164,13 +356,18 @@ build_db() {
         if test -f $dir/$sample_id.fasta; then
             # append sample ID to fasta headers and insert entry to database
             cat $dir/$sample_id.fasta | sed "/>/ s/^>/>${sample_id}|/g" >> $2
+            # create kmer profile
+            mash sketch -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id 2> /dev/null
         else
             echo "$sample_id.fasta not found under $dir"
             exit 1
         fi
     done
 
-    # index database
+    # index sequence database
+
+    # construct kmer db
+    echo "build_db: Constructing local k-mer database..."
     seqkit faidx $2
 
     # database versioning control
@@ -264,7 +461,7 @@ replace() {
 if [[ $# -eq 0 || $1 =~ ^(--help|-h) ]]; then
     script_usage
     exit 0
-elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db)$ ]]; then
+elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|search|build_tree)$ ]]; then
     echo "Invalid subcommand given"
     script_usage
     exit 1
@@ -275,6 +472,18 @@ fi
 seqkit -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
     echo "Seqkit cannot be called, check its installation, exiting"
+    exit 1
+fi
+# mash
+mash sketch -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "mash cannot be called, check its installation, exiting"
+    exit 1
+fi
+# phame
+phame sketch -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "phame cannot be called, check its installation, exiting"
     exit 1
 fi
 
@@ -453,11 +662,98 @@ elif [[ $1 == "replace" ]]; then
     if [[ -z $QUERY ]]; then 
         echo "replace: required argument -q is missing, exiting"; replace_usage; exit 1
     elif [[ -z $DB_PATH ]]; then
-        echo "replace: required argument -q is missing, exiting"; replace_usage; exit 1
+        echo "replace: required argument -d is missing, exiting"; replace_usage; exit 1
     elif [[ -z $INPUT_PATH ]]; then 
         echo "replace: required argument -i is missing, exiting"; replace_usage; exit 1
     fi
 
     # call replace function
     replace $QUERY $INPUT_PATH $DB_PATH
+
+elif [[ $1 == "search" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        search_usage
+        exit 0
+    fi
+    opts=`getopt -o hq:d:i:o:c:t: -l help,db:,query:,input:,output:,cutoff:,threads: -- "$@"`
+    eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "search: Invalid arguments used, exiting"; search_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "search: Invalid arguments used, exiting"; search_usage; exit 1 ; fi
+
+    while true; do
+        case "$1" in
+            -q|--query) QUERY=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            -i|--input) INPUT_PATH=$2; shift 2;;
+            -o|--output) OUTPUT_PATH=$2; shift 2;;
+            -c|--cutoff) CUTOFF=$2; shift 2;;
+            -t|--threads) THREADS=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) search_usage; exit 0;;
+        esac
+    done
+
+    # check if required arguments present
+    if [[ -z $QUERY ]]; then 
+        echo "search: required argument -q is missing, exiting"; search_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then
+        echo "search: required argument -q is missing, exiting"; search_usage; exit 1
+    elif [[ -z $INPUT_PATH ]]; then 
+        echo "search: required argument -i is missing, exiting"; search_usage; exit 1
+    elif [[ -z $OUTPUT_PATH ]]; then 
+        echo "search: required argument -o is missing, exiting"; search_usage; exit 1
+    fi
+
+    if [[ -z $CUTOFF ]]; then
+        CUTOFF=1
+    fi
+
+    if [[ -z $THREADS ]]; then
+        THREADS=1
+    fi
+
+    # call search function
+    search $QUERY $INPUT_PATH $DB_PATH $OUTPUT_PATH $CUTOFF $THREADS
+
+elif [[ $1 == "build_tree" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        search_usage
+        exit 0
+    fi
+    opts=`getopt -o hd:l:o:t:r:n: -l help,db:,list:,output:,threads:,reference: -- "$@"`
+    eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
+
+    while true; do
+        case "$1" in
+            -l|--list) INPUT_LIST=$2; shift 2;;
+            -d|--db) DB_PATH=$2; shift 2;;
+            -o|--output) OUTPUT_DIR=$2; shift 2;;
+            -t|--threads) THREADS=$2; shift 2;;
+            -r|--reference) REF_PATH=$2; shift 2;;
+            -n) N_HITS=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) build_tree_usage; exit 0;;
+        esac
+    done
+
+    # check if required arguments present
+    if [[ -z $INPUT_LIST ]]; then 
+        echo "build_tree: required argument -l is missing, exiting"; build_tree_usage; exit 1
+    elif [[ -z $DB_PATH ]]; then
+        echo "build_tree: required argument -d is missing, exiting"; build_tree_usage; exit 1
+    elif [[ -z $OUTPUT_DIR ]]; then 
+        echo "build_tree: required argument -o is missing, exiting"; build_tree_usage; exit 1
+    elif [[ -z $REF_PATH ]]; then 
+        echo "build_tree: required argument -r is missing, exiting"; build_tree_usage; exit 1
+    fi
+
+    if [[ -z $THREADS ]]; then THREADS=1; fi
+    if [[ -z $N_HITS ]]; then N_HITS=50; fi
+
+    # call build_tree function
+    build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $N_HITS
 fi

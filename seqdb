@@ -500,7 +500,7 @@ insert() {
             if test -f $2; then
                 
                 # sketch k-mer profile for insert
-                if test -d $3/sketches; then
+                if test -d $(dirname $3)/sketches; then
                     echo "insert: Generating k-mer profile for $1"
                     mash sketch -s 10000 $2 -o $(dirname $3)/sketches/$1.msh 2> /dev/null
                 else
@@ -511,6 +511,13 @@ insert() {
                 cat $2 | sed "/>/ s/^>/>$1|/g" >> $3
                 # Invalidate the index by deleting it.
                 rm $3.fai
+
+                # reformat database to ensure equal lengths across entries
+                picard NormalizeFasta -I $3 -O $3.tmp > /dev/null
+                mv $3.tmp $3
+
+                # index 
+                seqkit faidx $3
 
                 echo "insert: Complete"
             else
@@ -539,7 +546,7 @@ remove() {
         else
             echo "remove: Deleting $1 from $2"
             
-            if [[ -d $(dirname $2)/sketches) ]]; then
+            if test -d $(dirname $2)/sketches; then
                 rm $(dirname $2)/sketches/$1.msh
             else
                 echo "remove: k-mer sketches directory is not found in the same directory as the input database at $(realpath $(dirname $3)), exiting"; exit 1
@@ -604,6 +611,12 @@ fi
 mashtree -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
     echo "mashtree cannot be called, check its installation, exiting"
+    exit 1
+fi
+# picard
+picard -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi
 

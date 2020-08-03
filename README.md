@@ -44,3 +44,5 @@ The following dependencies must be installed and added to PATH:
 * seqkit >= 0.13.0
 * mash >= 2.2.2
 * phame = 1.0.3
+* mashtree >= 1.1.2
+* picard >= 2.23.3

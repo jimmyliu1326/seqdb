@@ -46,3 +46,4 @@ The following dependencies must be installed and added to PATH:
 * phame = 1.0.3
 * mashtree >= 1.1.2
 * picard >= 2.23.3
+* kipper >= 1.0.0

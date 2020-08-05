@@ -163,7 +163,6 @@ build_tree() {
     mkdir -p $2/phame/ref_dir
     mkdir -p $2/phame/work_dir
 
-
     # search for top hits
     if test -f $1; then
 
@@ -383,7 +382,7 @@ kipper_restore() {
         exit 1
     fi
 
-    kipper.py $2 -r -n $3 -o $1
+    kipper.py $2 -e -n $3 -o $1
 }
 
 # unbuild database

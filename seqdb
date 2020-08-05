@@ -54,6 +54,9 @@ seqdb kipper [options]
 Required arguments:
 -b|--backup         Do an incremental backup and create a new version of the archive database
 -l|--list           List versions of the database
+-r|--restore        Restore a copy of the archive database to a specific version
+-v|--version        Version number (for -r restore)
+-o|--output         Path to output sequence database (for -r restore)
 -i|--input          Path to input sequence database (for -b backup)
 -d|--database       Path to archive database (optional if remembered)
 
@@ -160,7 +163,6 @@ build_tree() {
     mkdir -p $2/phame/ref_dir
     mkdir -p $2/phame/work_dir
 
-
     # search for top hits
     if test -f $1; then
 
@@ -263,9 +265,6 @@ build_tree() {
     else
         echo "build_tree: Input list was not found, exiting"; exit 1
     fi   
-        
-
-
 }
 
 # search database for hits
@@ -318,7 +317,7 @@ search() {
     fi
 }
 
-# Use this to set the new config value, needs 2 parameters. 
+# Use this to set the new config value for kipper archive database. 
 function set_config(){
     echo "DB_PATH=\"$DB_PATH\"" > $cfgpath
     
@@ -346,7 +345,7 @@ kipper_backup() {
     # $2    output sequence database
 
     ## check integrity of input file structure
-    echo "kipper: Perform archival function..."
+    echo "kipper: Perform archival backup function..."
 
     # directory
     if [[ -d $1 ]]; then
@@ -365,6 +364,25 @@ kipper_backup() {
     else
         echo "kipper: Backup complete"
     fi
+}
+
+# Perform restore function.
+kipper_restore() {
+
+    # $1    output sequence database path including database name (*.fasta)
+    # $2    input archive database
+    # $3    version number
+
+    ## check integrity of input file structure
+    echo "kipper: Perform archival restore function..."
+
+    # directory
+    if [[ -d $1 ]]; then
+        echo "kipper: Output path $1 is a directory, looking for *.fasta, exiting"
+        exit 1
+    fi
+
+    kipper.py $2 -e -n $3 -o $1
 }
 
 # unbuild database
@@ -619,7 +637,12 @@ if [[ $(echo $?) -ne 0 ]]; then
     echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi
-
+# kipper
+kipper.py -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "kipper cannot be called, check its installation, exiting"
+    exit 1
+fi
 
 
 # parse subcommands
@@ -689,20 +712,24 @@ elif
         kipper_usage
         exit 0
     fi
-    opts=`getopt -o hbli:d: -l help,backup,list,input:,database: -- "$@"`
+    opts=`getopt -o hblri:v:o:d: -l help,backup,list,restore,input:,version:,output:,database: -- "$@"`
     if [ $? != 0 ] ; then echo "kipper: Invalid arguments used, exiting"; kipper_usage; exit 1 ; fi
     eval set -- "$opts"
     if [[ $1 =~ ^--$ ]] ; then echo "kipper: Invalid arguments used, exiting"; kipper_usage; exit 1 ; fi
 
     backup=false
     listdb=false
+    restore=false
     while true; do
         case "$1" in
             -i|--input) INPUT_PATH=$2; shift 2;;
+            -o|--output) OUTPUT_PATH=$2; shift 2;;
             -d|--database) DB_PATH=$2; shift 2;;
+            -v|--version) VERSION=$2; shift 2;;
             --) shift; break ;;
             -h|--help) kipper_usage; exit 0;;
             -b|--backup) backup=true; shift 1;;
+            -r|--restore) restore=true; shift 1;;
             -l|--list) listdb=true; shift 1;;
         esac
     done
@@ -750,6 +777,20 @@ elif
         # call kipper backup function
         #echo "Call Kipper $DB_PATH -i $INPUT_PATH -o."
         kipper_backup $INPUT_PATH $DB_PATH 
+    fi
+
+    if [ "$restore" = true ]; then
+        # check if required arguments present
+        if [[ -z $OUTPUT_PATH ]]; then
+            echo "kipper: required argument -o is missing, exiting"; kipper_usage; exit 1
+        fi
+        if [[ -z $VERSION ]]; then
+            echo "kipper: required argument -v is missing, exiting"; kipper_usage; exit 1
+        fi
+                
+        # call kipper restore function
+        echo "Restoring Kipper $DB_PATH version $VERSION to $OUTPUT_PATH."
+        kipper_restore $OUTPUT_PATH $DB_PATH $VERSION
     fi
 
 elif [[ $1 == "extract" ]]; then
@@ -962,5 +1003,4 @@ elif [[ $1 == "build_tree" ]]; then
     else
         build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $N_HITS
     fi
-
 fi

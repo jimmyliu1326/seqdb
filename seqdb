@@ -260,6 +260,10 @@ build_tree() {
                 echo "${lines%.*},query"
             done < $1
 
+            # sync sample names in metadata with names used in tree file
+            sed -i 's/-/_/g' $2/metadata_microreact.csv
+            sed -i 's/\./_/g' $2/metadata_microreact.csv
+
             echo "build_tree: Tree file wrote to: $2/tree.nwk"
             echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"

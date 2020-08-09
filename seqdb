@@ -163,27 +163,30 @@ build_tree() {
 
     # search for top hits
     if test -f $1; then
+        if test -d $(dirname $3)/sketches; then
+            echo "build_tree: Estimating k-mer distance..."
+            while read lines; do
+                if test -f $lines; then
+                
+                    # get filename
+                    filename=$(basename $lines)
 
-        echo "build_tree: Estimating k-mer distance..."
-        while read lines; do
-            if test -f $lines; then
-            
-                # get filename
-                filename=$(basename $lines)
+                    # estimate kmer distance
+                    if [[ $7 == --fast_tree ]]; then
+                        search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep #> /dev/null
+                    else
+                        search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 #> /dev/null
+                    fi
 
-                # estimate kmer distance
-                if [[ $7 == --fast_tree ]]; then
-                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep > /dev/null
+                    # filter top hits
+                    head -n $6 $2/mash_res/${filename%.*}.tsv | cut -f1 -d' ' > $2/mash_res/${filename%.*}.hits
                 else
-                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 > /dev/null
+                    echo "build_tree: $lines from the input list was not found, exiting"; exit 1
                 fi
-
-                # filter top hits
-                head -n $6 $2/mash_res/${filename%.*}.tsv | cut -f1 -d' ' > $2/mash_res/${filename%.*}.hits
-            else
-                echo "build_tree: $lines from the input list was not found, exiting"; exit 1
-            fi
-        done < $1
+            done < $1
+        else
+            echo "search: Mash sketches was not found in the same directory as the sequence database"; exit 1
+        fi
 
         # consolidate top hits, keep unique hits only
         cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list
@@ -243,6 +246,21 @@ build_tree() {
             rm -rf $2/mash_res
             rm $2/db_top_hits.list
             rm $2/phame.ctl
+            
+            # write metadata file
+            echo "ID,status__autocolor" > $2/metadata_microreact.csv
+            while read lines; do
+                echo "${lines},reference" >> $2/metadata_microreact.csv
+            done < $2/db_top_hits.list
+
+            while read lines; do
+                filename=$(basename $lines)
+                echo "${lines%.*},query"
+            done < $1
+
+            echo "build_tree: Tree file wrote to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Complete"
         else
             # Run K-mer distance tree
             # set up input directory for mash tree
@@ -254,10 +272,25 @@ build_tree() {
             echo "build_tree: Constructing k-mer distance tree..."
             mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk
 
+            # write metadata file
+            echo "ID,status__autocolor" > $2/metadata_microreact.csv
+            while read lines; do
+                echo "${lines},reference" >> $2/metadata_microreact.csv
+            done < $2/db_top_hits.list
+
+            while read lines; do
+                filename=$(basename $lines)
+                echo "${lines%.*},query"
+            done < $1
+
             # clean up
             rm -rf $2/mash_res
             rm -rf $2/phame
             rm $2/db_top_hits.list
+
+            echo "build_tree: Tree file wrote to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Complete"
         fi        
 
     else
@@ -614,8 +647,8 @@ if [[ $(echo $?) -ne 0 ]]; then
     exit 1
 fi
 # picard
-picard -h > /dev/null
-if [[ $(echo $?) -ne 0 ]]; then
+picard -h 2> /dev/null
+if [[ $(echo $?) -ne 1 ]]; then
     echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi

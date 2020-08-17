@@ -242,13 +242,6 @@ build_tree() {
             echo "build_tree: Constructing cgSNP tree..."
             phame $2/phame.ctl
 
-            # clean up
-            mv $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
-            rm -rf $2/phame
-            rm -rf $2/mash_res
-            rm $2/db_top_hits.list
-            rm $2/phame.ctl
-            
             # write metadata file
             echo "ID,status__autocolor" > $2/metadata_microreact.csv
             while read lines; do
@@ -257,12 +250,21 @@ build_tree() {
 
             while read lines; do
                 filename=$(basename $lines)
-                echo "${lines%.*},query"
+                echo "${filename%.*},query" >> $2/metadata_microreact.csv
             done < $1
+
+            echo "$(basename ${4%.*}),reference sequence" >> $2/metadata_microreact.csv
 
             # sync sample names in metadata with names used in tree file
             sed -i 's/-/_/g' $2/metadata_microreact.csv
             sed -i 's/\./_/g' $2/metadata_microreact.csv
+            
+            # clean up
+            mv $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
+            rm -rf $2/phame
+            rm -rf $2/mash_res
+            rm $2/db_top_hits.list
+            rm $2/phame.ctl
 
             echo "build_tree: Tree file wrote to: $2/tree.nwk"
             echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
@@ -286,7 +288,7 @@ build_tree() {
 
             while read lines; do
                 filename=$(basename $lines)
-                echo "${lines%.*},query"
+                echo "${filename%.*},query" >> $2/metadata_microreact.csv
             done < $1
 
             # clean up
@@ -393,7 +395,7 @@ kipper_backup() {
     foo="kipper.py $2 -l"
     fooIn=$($foo)
 
-    kipper.py $2 -i $1 -o.
+    kipper.py $2 -m -i $1 -o.
     
     fooOut=$($foo)
     if [ "$fooIn" = "$fooOut" ]; then
@@ -644,6 +646,8 @@ elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|searc
 fi
 
 ## check dependencies
+script_path=$(echo $(dirname $0))
+
 # seqkit
 seqkit -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
@@ -675,7 +679,7 @@ if [[ $(echo $?) -ne 1 ]]; then
     exit 1
 fi
 # kipper
-kipper.py -h > /dev/null
+${script_path}/kipper/kipper.py -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
     echo "kipper cannot be called, check its installation, exiting"
     exit 1

@@ -1115,6 +1115,6 @@ elif [[ $1 == "list" ]]; then
     elif [[ -z $DB_PATH ]]; then
         echo "list: required argument -d is missing, exiting"; list_usage; exit 1
     fi
-    # call extract function
+    # call seqdb_list function
     seqdb_list $DB_PATH
 fi

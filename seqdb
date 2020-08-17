@@ -12,9 +12,11 @@ Available subcommands:
     remove      remove an existing target from database
     insert      add a new sequence to database
     replace     replace sequence of an existing target with a new sequence
+    list        print all samples archived in a local sequence database to screen
     search      identify significant hits from an existing database given a query sequence
     build_tree  construct a cgSNP tree from closest genomic neighbours in the database
     kipper      interact with the data archive system
+
 "
 }
 
@@ -28,7 +30,7 @@ Required arguments:
 -o|--output         Path to output sequence database
 
 Optional arguments:
--h|--help   Display help message
+-h|--help           Display help message
 "
 }
 
@@ -42,7 +44,7 @@ Required arguments:
 -o|--output         Path to output parent directory with subfolders representing individual samples
 
 Optional arguments:
--h|--help   Display help message
+-h|--help           Display help message
 "
 }
 
@@ -61,7 +63,7 @@ Required arguments:
 -d|--database       Path to archive database (optional if remembered)
 
 Optional arguments:
--h|--help   Display help message
+-h|--help           Display help message
 "
 }
 
@@ -73,6 +75,9 @@ seqdb extract [options]
 Required arguments:
 -q|--query      Query sample ID
 -d|--db         Path to sequence database
+
+Optional arguments:
+-h|--help           Display help message
 "
 }
 
@@ -84,6 +89,9 @@ seqdb remove [options]
 Required arguments:
 -q|--query      Query sample ID
 -d|--db         Path to sequence database
+
+Optional arguments:
+-h|--help       Display help message
 "
 }
 
@@ -96,6 +104,9 @@ Required arguments:
 -q|--query      Query sample ID
 -i|--input      Path to new sequence file in fasta format
 -d|--db         Path to sequence database
+
+Optional arguments:
+-h|--help       Display help message
 "
 }
 
@@ -108,6 +119,9 @@ Required arguments:
 -q|--query      Input sample ID
 -i|--input      Path to input sequence file in fasta format
 -d|--db         Path to sequence database
+
+Optional arguments:
+-h|--help       Display help message
 "
 }
 
@@ -125,6 +139,7 @@ Required arguments:
 Optional arguments:
 -c|--cutoff     Filter results by a maximum distance cutoff [Default: 1] (Ranges from 0 to 1)
 -t|--threads    Number of threads used [Default: 1]
+-h|--help       Display help message
 "
 }
 
@@ -144,7 +159,35 @@ Optional arguments:
 -n                    Number of top hits to include per query [Default: 50]
 --fast_tree           Construct K-mer distance tree instead of cgSNP tree
 
+Optional arguments:
+-h|--help             Display help message
+
 "
+}
+
+list_usage() {
+
+echo "
+seqdb list [options]
+
+Required arguments:
+-d|--db             Path to sequence database
+
+Optional arguments:
+-h|--help           Display help message
+
+"
+}
+
+# list all sample names archived in database
+seqdb_list() {
+
+    # $1 path to database
+
+    # call seqkit and print all sample names to screen
+    seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq
+
+
 }
 
 # construct SNP tree from significant hits and query sequences
@@ -1049,4 +1092,29 @@ elif [[ $1 == "build_tree" ]]; then
     else
         build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $N_HITS
     fi
+elif [[ $1 == "list" ]]; then
+    shift 1
+    if [[ $# -eq 0 ]]; then
+        list_usage
+        exit 0
+    fi
+    opts=`getopt -o hd: -l help,db: -- "$@"`
+    eval set -- "$opts"
+    if [ $? != 0 ] ; then echo "list: Invalid arguments used, exiting"; list_usage; exit 1 ; fi
+    if [[ $1 =~ ^--$ ]] ; then echo "list: Invalid arguments used, exiting"; list_usage; exit 1 ; fi
+
+    while true; do
+        case "$1" in
+            -d|--db) DB_PATH=$2; shift 2;;
+            --) shift; break ;;
+            -h|--help) list_usage; exit 0;;
+        esac
+    done
+
+    # check if required arguments present
+    elif [[ -z $DB_PATH ]]; then
+        echo "list: required argument -d is missing, exiting"; list_usage; exit 1
+    fi
+    # call extract function
+    seqdb_list $DB_PATH
 fi

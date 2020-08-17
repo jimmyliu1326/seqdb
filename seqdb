@@ -185,7 +185,7 @@ seqdb_list() {
     # $1 path to database
 
     # call seqkit and print all sample names to screen
-    seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq
+    seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq | sed 's/>//g'
 
 
 }
@@ -418,7 +418,7 @@ kipper_listdb() {
         exit 1
     fi
 
-    kipper.py $1 -l
+    $script_path/src/kipper.py $1 -l
 }
 
 # Perform archival functions.
@@ -438,13 +438,13 @@ kipper_backup() {
  
     # If the output database does not exist, create it.
     if [[ ! -f "$2.md" ]]; then
-        kipper.py $2 -M fasta
+        $script_path/src/kipper.py $2 -M fasta
     fi
 
-    foo="kipper.py $2 -l"
+    foo="$script_path/src/kipper.py $2 -l"
     fooIn=$($foo)
 
-    kipper.py $2 -m -i $1 -o.
+    $script_path/src/kipper.py $2 -m -i $1 -o.
     
     fooOut=$($foo)
     if [ "$fooIn" = "$fooOut" ]; then
@@ -470,7 +470,7 @@ kipper_restore() {
         exit 1
     fi
 
-    kipper.py $2 -e -n $3 -o $1
+    $script_path/src/kipper.py $2 -e -n $3 -o $1
 }
 
 # unbuild database
@@ -688,7 +688,7 @@ replace() {
 if [[ $# -eq 0 || $1 =~ ^(--help|-h) ]]; then
     script_usage
     exit 0
-elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|search|build_tree)$ ]]; then
+elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|search|build_tree|list)$ ]]; then
     echo "Invalid subcommand given"
     script_usage
     exit 1
@@ -1112,7 +1112,7 @@ elif [[ $1 == "list" ]]; then
     done
 
     # check if required arguments present
-    elif [[ -z $DB_PATH ]]; then
+    if [[ -z $DB_PATH ]]; then
         echo "list: required argument -d is missing, exiting"; list_usage; exit 1
     fi
     # call seqdb_list function

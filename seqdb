@@ -327,6 +327,7 @@ search() {
                 mash sketch -s 10000 $2 -o $(dirname $4)/$1 2> /dev/null
 
                 # create empty output file
+                if test -f $4; then rm $4; fi
                 touch $4
 
                 # estimate mash distance

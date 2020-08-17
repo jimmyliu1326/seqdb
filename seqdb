@@ -392,6 +392,11 @@ kipper_backup() {
         exit 1
     fi
  
+    # If the output database does not exist, create it.
+    if [[ ! -f "$2.md" ]]; then
+        kipper.py $2 -M fasta
+    fi
+
     foo="kipper.py $2 -l"
     fooIn=$($foo)
 
@@ -660,18 +665,6 @@ if [[ $(echo $?) -ne 0 ]]; then
     echo "mash cannot be called, check its installation, exiting"
     exit 1
 fi
-# phame
-phame -h > /dev/null
-if [[ $(echo $?) -ne 0 ]]; then
-    echo "phame cannot be called, check its installation, exiting"
-    exit 1
-fi
-# mashtree
-mashtree -h > /dev/null
-if [[ $(echo $?) -ne 0 ]]; then
-    echo "mashtree cannot be called, check its installation, exiting"
-    exit 1
-fi
 # picard
 picard -h 2> /dev/null
 if [[ $(echo $?) -ne 1 ]]; then
@@ -684,7 +677,18 @@ if [[ $(echo $?) -ne 0 ]]; then
     echo "kipper cannot be called, check its installation, exiting"
     exit 1
 fi
-
+# phame
+phame -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "phame cannot be called, check its installation, exiting"
+    exit 1
+fi
+# mashtree
+mashtree -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
+    echo "mashtree cannot be called, check its installation, exiting"
+    exit 1
+fi
 
 # parse subcommands
 if [[ $1 == "build_db" ]]; then

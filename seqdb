@@ -418,7 +418,7 @@ kipper_listdb() {
         exit 1
     fi
 
-    $script_path/src/kipper.py $1 -l
+    $script_path/kipper/kipper.py $1 -l
 }
 
 # Perform archival functions.
@@ -438,13 +438,13 @@ kipper_backup() {
  
     # If the output database does not exist, create it.
     if [[ ! -f "$2.md" ]]; then
-        $script_path/src/kipper.py $2 -M fasta
+        $script_path/kipper/kipper.py $2 -M fasta
     fi
 
-    foo="$script_path/src/kipper.py $2 -l"
+    foo="$script_path/kipper/kipper.py $2 -l"
     fooIn=$($foo)
 
-    $script_path/src/kipper.py $2 -m -i $1 -o.
+    $script_path/kipper/kipper.py $2 -m -i $1 -o.
     
     fooOut=$($foo)
     if [ "$fooIn" = "$fooOut" ]; then
@@ -470,7 +470,7 @@ kipper_restore() {
         exit 1
     fi
 
-    $script_path/src/kipper.py $2 -e -n $3 -o $1
+    $script_path/kipper/kipper.py $2 -e -n $3 -o $1
 }
 
 # unbuild database
@@ -538,6 +538,18 @@ build_db() {
     fi
 
     ## construct sequence db
+    
+
+    # remove database if exsits
+    if test -f $2; then
+        echo "build_db: The specified output path exists, removing..."
+        rm $2
+    fi
+
+    if test -d $(dirname $2)/sketches; then
+        rm -rf $(dirname $2)/sketches
+    fi
+
     echo "build_db: Constructing local sequence database..."
     mkdir -p $(dirname $2)/sketches
 
@@ -552,7 +564,9 @@ build_db() {
             # create kmer profile
             mash sketch -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id 2> /dev/null
         else
-            echo "$sample_id.fasta not found under $dir"
+            echo "build_db: $sample_id.fasta not found under ${dir}, exiting"
+            rm -rf $2
+            rm -rf $(dirname $2)/sketches
             exit 1
         fi
     done

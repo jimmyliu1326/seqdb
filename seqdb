@@ -209,16 +209,17 @@ build_tree() {
     # search for top hits
     if test -f $1; then
         if test -d $(dirname $3)/sketches; then
-            echo "build_tree: Estimating k-mer distance..."
-            while read lines; do
-                if test -f $lines; then
-                
+            echo "build_tree from $1: Estimating k-mer distance..."
+            while read lines; do                
+                if test -f $lines; then                
                     # get filename
                     filename=$(basename $lines)
 
                     # estimate kmer distance
                     if [[ $7 == --fast_tree ]]; then
+#echo "search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep"                    
                         search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep #> /dev/null
+#exit 1                        
                     else
                         search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 #> /dev/null
                     fi
@@ -226,7 +227,10 @@ build_tree() {
                     # filter top hits
                     head -n $6 $2/mash_res/${filename%.*}.tsv | cut -f1 -d' ' > $2/mash_res/${filename%.*}.hits
                 else
-                    echo "build_tree: $lines from the input list was not found, exiting"; exit 1
+                    echo "build_tree: the following file from the input list $1 was not found, exiting"
+                    echo "$lines"
+                    echo "Make sure the $1 file is in Unix format, not Windows (may need to use dos2unix command to convert)."
+                    exit 1
                 fi
             done < $1
         else
@@ -234,6 +238,7 @@ build_tree() {
         fi
 
         # consolidate top hits, keep unique hits only
+#echo "cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list"
         cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list
 
         # run SNP tree as default
@@ -309,8 +314,8 @@ build_tree() {
             rm $2/db_top_hits.list
             rm $2/phame.ctl
 
-            echo "build_tree: Tree file wrote to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Tree file written to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"
         else
             # Run K-mer distance tree
@@ -321,7 +326,9 @@ build_tree() {
 
             # run mashtree
             echo "build_tree: Constructing k-mer distance tree..."
+#echo "mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk"            
             mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk
+#exit 1
 
             # write metadata file
             echo "ID,status__autocolor" > $2/metadata_microreact.csv
@@ -339,8 +346,8 @@ build_tree() {
             rm -rf $2/phame
             rm $2/db_top_hits.list
 
-            echo "build_tree: Tree file wrote to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Tree file written to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"
         fi        
 
@@ -359,7 +366,7 @@ search() {
     # $5    distance cutoff
     # $6    threads
     # $7    keep sketch
-
+# eg search GCA_002055565.1 /c/Users/User/Downloads/complete_genomes/GCA_002055565.1.fna /data/amrDB/hpsuis/hpsuis_db.fasta /c/Temp//mash_res/GCA_002055565.1.tsv 1 1
     echo "search: Searching $1 against $3"
 
     if test -f $3; then
@@ -387,7 +394,7 @@ search() {
                 sed -e 's/.fasta//g' -e 's/.fna//g' -e 's/.fa//g' $4 > $4.tmp && mv $4.tmp $4
                 sort -gk3 $4 > $4.tmp && mv $4.tmp $4
 
-                echo "search: Output wrote to: $4"
+                echo "search: Output written to: $4"
 
             else
                 echo "search: Path to input sequence file not found, exiting"; exit 1
@@ -537,10 +544,9 @@ build_db() {
         echo "build_db: Total samples found: $samples_n"
     fi
 
-    ## construct sequence db
-    
+    ## construct sequence db    
 
-    # remove database if exsits
+    # remove database if exists
     if test -f $2; then
         echo "build_db: The specified output path exists, removing..."
         rm $2
@@ -590,7 +596,7 @@ extract() {
         #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
         if [[ $(seqkit faidx -r $2 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
             # 1>&2 redirect echo output to stderr
-            echo "extract: Query sample ID not found, exiting" 1>&2
+            echo "extract: Query sample ID $1 not found, exiting" 1>&2
             exit 1
         else
             if test -f $2; then
@@ -678,8 +684,7 @@ remove() {
             # Invalidate the index by deleting it.
             rm $2.fai
 
-            echo "remove: Complete"
-            
+            echo "remove: Complete"            
         fi
     else
         echo "remove: Path to Database $2 does not exist, exiting"
@@ -724,8 +729,8 @@ if [[ $(echo $?) -ne 0 ]]; then
     exit 1
 fi
 # picard
-picard -h 2> /dev/null
-if [[ $(echo $?) -ne 1 ]]; then
+picard -h > /dev/null
+if [[ $(echo $?) -ne 0 ]]; then
     echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi

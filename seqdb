@@ -186,8 +186,6 @@ seqdb_list() {
 
     # call seqkit and print all sample names to screen
     seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq | sed 's/>//g'
-
-
 }
 
 # construct SNP tree from significant hits and query sequences
@@ -309,14 +307,17 @@ build_tree() {
             rm $2/db_top_hits.list
             rm $2/phame.ctl
 
-            echo "build_tree: Tree file wrote to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Tree file written to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"
         else
             # Run K-mer distance tree
             # set up input directory for mash tree
             while read lines; do
-                ln -s $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
+                ln -s $(dirname $(realpath $3))/sketches/$lines.msh $2/mash_res/$lines.msh
+                
+                # Create copies of real files if this is in the Windows file system.
+                #cp $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
             done < $2/db_top_hits.list
 
             # run mashtree
@@ -339,8 +340,8 @@ build_tree() {
             rm -rf $2/phame
             rm $2/db_top_hits.list
 
-            echo "build_tree: Tree file wrote to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file wrote to: $2/metadata_microreact.csv"
+            echo "build_tree: Tree file written to: $2/tree.nwk"
+            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"
         fi        
 
@@ -387,13 +388,13 @@ search() {
                 sed -e 's/.fasta//g' -e 's/.fna//g' -e 's/.fa//g' $4 > $4.tmp && mv $4.tmp $4
                 sort -gk3 $4 > $4.tmp && mv $4.tmp $4
 
-                echo "search: Output wrote to: $4"
+                echo "search: Output written to: $4"
 
             else
                 echo "search: Path to input sequence file not found, exiting"; exit 1
             fi
         else
-            echo "search: Mash sketches was not found in the same directory as the sequence database"; exit 1
+            echo "search: Mash sketches were not found in the same directory as the sequence database"; exit 1
         fi
     else
         echo "search: Path to database not found, exiting"; exit 1
@@ -708,6 +709,8 @@ elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|searc
     exit 1
 fi
 
+cd # Run from home directory.
+
 ## check dependencies
 script_path=$(echo $(dirname $0))
 
@@ -718,6 +721,7 @@ if [[ $(echo $?) -ne 0 ]]; then
     exit 1
 fi
 # mash
+#conda run -n mash-2.2.2 mash sketch -h > /dev/null
 mash sketch -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then
     echo "mash cannot be called, check its installation, exiting"
@@ -777,7 +781,6 @@ if [[ $1 == "build_db" ]]; then
     fi
     # call build_db function
     build_db $INPUT_PATH $OUTPUT_PATH    
-
 elif 
 [[ $1 == "unbuild_db" ]]; then
     shift 1
@@ -807,7 +810,6 @@ elif
     fi 
     # call unbuild_db function
     unbuild_db $INPUT_PATH $OUTPUT_PATH
-
 elif 
 [[ $1 == "kipper" ]]; then
     shift 1
@@ -1059,7 +1061,6 @@ elif [[ $1 == "search" ]]; then
 
     # call search function
     search $QUERY $INPUT_PATH $DB_PATH $OUTPUT_PATH $CUTOFF $THREADS
-
 elif [[ $1 == "build_tree" ]]; then
     shift 1
     if [[ $# -eq 0 ]]; then

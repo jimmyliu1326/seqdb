@@ -733,8 +733,8 @@ if [[ $(echo $?) -ne 0 ]]; then
     exit 1
 fi
 # picard
-picard -h > /dev/null
-if [[ $(echo $?) -ne 0 ]]; then
+picard -h 2> /dev/null
+if [[ $(echo $?) -ne 1 ]]; then
     echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi

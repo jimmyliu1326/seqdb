@@ -152,12 +152,18 @@ Required arguments:
 -l|--list             List containing path to each query sequence per line (Must be absolute paths)
 -o|--output           Path to output directory
 -d|--db               Path to sequence database
--r|--reference        Path to reference sequence (required for cgSNP tree)
+-r|--reference        Path to reference sequence (not required with --fast_tree)
+--linkage             Select method to define molecular linkage; Choices: [threshold, tophits, cluster]
+                        threshold: use a universal distance threshold cutoff to define linkage
+                        tophits: retrieve the top n number of hits ranked by genetic distances from low to high
+                        cluster: use multi-dimensional density-based clustering to identify the closest related subpopulation
 
 Optional arguments:
 -t|--threads          Number of threads used [Default: 1]
--n                    Number of top hits to include per query [Default: 50]
 --fast_tree           Construct K-mer distance tree instead of cgSNP tree
+-c|--cutoff           Specify threshold cutoff to define molecular linkage
+                        threshold: [0.001 by default]
+                        tophits: [25 by default]
 
 Optional arguments:
 -h|--help             Display help message
@@ -188,6 +194,24 @@ seqdb_list() {
     seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq | sed 's/>//g'
 }
 
+# identify sequences with molecular linkage to query
+molecular_linkage() {
+
+    # $1 mash results
+    # $2 linkage method
+    # $3 threshold cutoff
+    # $4 output file
+    # $5 number of threads
+
+    if [[ $2 == threshold ]]; then
+        awk -v var=${3} '{ if ($3 <= $var) print $1 }' $1 > $4
+    elif [[ $2 == tophits ]]; then
+        head -n $3 $1 | cut -f1 -d' '> $4
+    elif [[ $2 == cluster ]]; then
+        $script_path/src/molecular_linkage.R $(dirname $1) $(basename $1) $4 $5
+    fi
+}
+
 # construct SNP tree from significant hits and query sequences
 build_tree() {
 
@@ -196,15 +220,17 @@ build_tree() {
     # $3    path to database
     # $4    path to reference sequence
     # $5    number of threads
-    # $6    number of hits to include per query
-    # $7    run fast k-mer tree construction
+    # $6    linkage method
+    # $7    cutoff value
+    # $8    run fast k-mer tree construction
 
     # set up output dir structure
     mkdir -p $2/mash_res
+    mkdir -p $2/plots
     mkdir -p $2/phame/ref_dir
     mkdir -p $2/phame/work_dir
 
-    # search for top hits
+    # search for linked sequences
     if test -f $1; then
         if test -d $(dirname $3)/sketches; then
             echo "build_tree from $1: Estimating k-mer distance..."
@@ -214,16 +240,38 @@ build_tree() {
                     filename=$(basename $lines)
 
                     # estimate kmer distance
-                    if [[ $7 == --fast_tree ]]; then
-#echo "search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep"                    
-                        search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 --keep #> /dev/null
-#exit 1                        
+                    if [[ $8 == --fast_tree ]]; then
+                        if [[ $6 == cluster ]]; then
+                            k_array=(15 17 19 21 23 25)
+                            for k in ${k_array[@]}; do
+                                if [[ $k -ne 21 ]]; then
+                                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
+                                else
+                                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
+                                fi
+                            done
+                            mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
+                        else
+                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
+                            mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
+                        fi
                     else
-                        search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 #> /dev/null
+                        if [[ $6 == cluster ]]; then
+                            k_array=(15 17 19 21 23 25)
+                            for k in ${k_array[@]}; do                 
+                                search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
+                            done
+                        else
+                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21
+                        fi
                     fi
 
-                    # filter top hits
-                    head -n $6 $2/mash_res/${filename%.*}.tsv | cut -f1 -d' ' > $2/mash_res/${filename%.*}.hits
+                    # identify molecularly linked sequences
+                    if [[ $6 == cluster ]]; then
+                        molecular_linkage $2/mash_res/${filename%.*} $6 $7 $2/mash_res/${filename%.*}.hits $5
+                    else
+                        molecular_linkage $2/mash_res/${filename%.*}.tsv $6 $7 $2/mash_res/${filename%.*}.hits
+                    fi
                 else
                     echo "build_tree: the following file from the input list $1 was not found, exiting"
                     echo "$lines"
@@ -235,12 +283,12 @@ build_tree() {
             echo "search: Mash sketches was not found in the same directory as the sequence database"; exit 1
         fi
 
-        # consolidate top hits, keep unique hits only
-#echo "cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list"
-        cat $2/mash_res/*.hits | sort -u | uniq > $2/db_top_hits.list
+        # consolidate linked sequences, keep unique sequences only
+        cat $2/mash_res/*.hits | sort -u | uniq > $2/linked_sequences.list
+        echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
 
         # run SNP tree as default
-        if [[ $7 != --fast_tree ]]; then
+        if [[ $8 != --fast_tree ]]; then
             ## set up input directory for SNP tree
             # query
             while read lines; do
@@ -250,10 +298,12 @@ build_tree() {
             done < $1
 
             # database hits
-            while read lines; do
-                # get sequence from database
-                extract $lines $3 > $2/phame/work_dir/$lines.fasta
-            done < $2/db_top_hits.list
+            if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
+                while read lines; do
+                    # get sequence from database
+                    extract $lines $3 > $2/phame/work_dir/$lines.fasta
+                done < $2/linked_sequences.list
+            fi
 
             # reference sequence
             if test -f $4; then
@@ -318,24 +368,24 @@ build_tree() {
         else
             # Run K-mer distance tree
             # set up input directory for mash tree
-            while read lines; do
-                ln -s $(dirname $(realpath $3))/sketches/$lines.msh $2/mash_res/$lines.msh
+            if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
+                while read lines; do
+                    ln -s $(dirname $(realpath $3))/sketches/$lines.21.msh $2/mash_res/$lines.msh
                 
-                # Create copies of real files if this is in the Windows file system.
-                #cp $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
-            done < $2/db_top_hits.list
+                    # Create copies of real files if this is in the Windows file system.
+                    #cp $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
+                done < $2/linked_sequences.list
+            fi
 
             # run mashtree
-            echo "build_tree: Constructing k-mer distance tree..."
-#echo "mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk"            
+            echo "build_tree: Constructing k-mer distance tree..."            
             mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk
-#exit 1
 
             # write metadata file
             echo "ID,status__autocolor" > $2/metadata_microreact.csv
             while read lines; do
                 echo "${lines},reference" >> $2/metadata_microreact.csv
-            done < $2/db_top_hits.list
+            done < $2/linked_sequences.list
 
             while read lines; do
                 filename=$(basename $lines)
@@ -345,10 +395,10 @@ build_tree() {
             # clean up
             rm -rf $2/mash_res
             rm -rf $2/phame
-            rm $2/db_top_hits.list
 
             echo "build_tree: Tree file written to: $2/tree.nwk"
             echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
+            echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
             echo "build_tree: Complete"
         fi        
 
@@ -366,30 +416,29 @@ search() {
     # $4    path to results
     # $5    distance cutoff
     # $6    threads
-    # $7    keep sketch
+    # $7    k-value
+    # $8    keep sketch
 # eg search GCA_002055565.1 /c/Users/User/Downloads/complete_genomes/GCA_002055565.1.fna /data/amrDB/hpsuis/hpsuis_db.fasta /c/Temp//mash_res/GCA_002055565.1.tsv 1 1
-    echo "search: Searching $1 against $3"
+    echo "search: Searching $1 against $3 with k = $7"
 
     if test -f $3; then
         if test -d $(dirname $3)/sketches; then
             if test -f $2; then
 
                 # create query k-mer profile
-                mash sketch -s 10000 $2 -o $(dirname $4)/$1 2> /dev/null
+                mash sketch -k $7 -s 10000 $2 -o $(dirname $4)/$1.$7 2> /dev/null
 
                 # create empty output file
                 if test -f $4; then rm $4; fi
                 touch $4
 
                 # estimate mash distance
-                for sketch in $(dirname $3)/sketches/*.msh; do
-                    mash dist $sketch $(dirname $4)/$1.msh -d $5 -p $6 >> $4
-                done
+                ls -d $(dirname $(realpath $3))/sketches/*.$7.msh | parallel -j $6 mash dist {} $(dirname $4)/${1}.$7.msh -d $5 -p 1 >> $4
 
                 # remove query k-mer profile
-                if [[ $7 != --keep ]]; then rm $(dirname $4)/$1.msh; fi
+                if [[ $8 != --keep ]]; then rm $(dirname $4)/$1.$7.msh; fi
 
-                # format output
+                # reformat output
                 awk 'gsub(/.*\//, "", $1)' $4 > $4.tmp && mv $4.tmp $4
                 awk 'gsub(/.*\//, "", $2)' $4 > $4.tmp && mv $4.tmp $4
                 sed -e 's/.fasta//g' -e 's/.fna//g' -e 's/.fa//g' $4 > $4.tmp && mv $4.tmp $4
@@ -568,8 +617,11 @@ build_db() {
         if test -f $dir/$sample_id.fasta; then
             # append sample ID to fasta headers and insert entry to database
             cat $dir/$sample_id.fasta | sed "/>/ s/^>/>${sample_id}|/g" >> $2
-            # create kmer profile
-            mash sketch -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id 2> /dev/null
+            # create kmer profiles for k = 15,17,19,21,23,25
+            k_array=(15 17 19 21 23 25)
+            for k in ${k_array[@]}; do
+                mash sketch -k $k -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id.${k} 2> /dev/null
+            done
         else
             echo "build_db: $sample_id.fasta not found under ${dir}, exiting"
             rm -rf $2
@@ -578,10 +630,7 @@ build_db() {
         fi
     done
 
-    # index sequence database
-
-    # construct kmer db
-    echo "build_db: Constructing local k-mer database..."
+    # index sequence database    
     seqkit faidx $2 # index
 
     echo "build_db: Local sequence database built at $2"    
@@ -629,7 +678,10 @@ insert() {
                 # sketch k-mer profile for insert
                 if test -d $(dirname $3)/sketches; then
                     echo "insert: Generating k-mer profile for $1"
-                    mash sketch -s 10000 $2 -o $(dirname $3)/sketches/$1.msh 2> /dev/null
+                    k_array=(15 17 19 21 23 25)
+                    for k in ${k_array[@]}; do
+                        mash sketch -k $k -s 10000 $2 -o $(dirname $3)/sketches/$1.${k} 2> /dev/null
+                    done
                 else
                     echo "insert: k-mer sketches directory is not found in the same directory as the input database at $(realpath $(dirname $3)), exiting"; exit 1
                 fi
@@ -674,7 +726,7 @@ remove() {
             echo "remove: Deleting $1 from $2"
             
             if test -d $(dirname $2)/sketches; then
-                rm $(dirname $2)/sketches/$1.msh
+                rm $(dirname $2)/sketches/$1.*.msh
             else
                 echo "remove: k-mer sketches directory is not found in the same directory as the input database at $(realpath $(dirname $3)), exiting"; exit 1
             fi
@@ -1065,14 +1117,14 @@ elif [[ $1 == "search" ]]; then
     if [[ -z $THREADS ]]; then THREADS=1; fi
 
     # call search function
-    search $QUERY $INPUT_PATH $DB_PATH $OUTPUT_PATH $CUTOFF $THREADS
+    search $QUERY $INPUT_PATH $DB_PATH $OUTPUT_PATH $CUTOFF $THREADS 21
 elif [[ $1 == "build_tree" ]]; then
     shift 1
     if [[ $# -eq 0 ]]; then
         build_tree_usage
         exit 0
     fi
-    opts=`getopt -o hd:l:o:t:r:n: -l help,db:,list:,output:,threads:,reference:,fast_tree -- "$@"`
+    opts=`getopt -o hd:l:o:t:r:n:c: -l help,db:,list:,output:,threads:,reference:,fast_tree,linkage:,cutoff: -- "$@"`
     eval set -- "$opts"
     if [ $? != 0 ] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
     if [[ $1 =~ ^--$ ]] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
@@ -1084,8 +1136,9 @@ elif [[ $1 == "build_tree" ]]; then
             -o|--output) OUTPUT_DIR=$2; shift 2;;
             -t|--threads) THREADS=$2; shift 2;;
             -r|--reference) REF_PATH=$2; shift 2;;
+            --linkage) LINKAGE=$2; shift 2;;
             --fast_tree) FAST_TREE=true; shift 1;;
-            -n) N_HITS=$2; shift 2;;
+            -c|--cutoff) CUTOFF=$2; shift 2;;
             --) shift; break ;;
             -h|--help) build_tree_usage; exit 0;;
         esac
@@ -1100,17 +1153,26 @@ elif [[ $1 == "build_tree" ]]; then
         echo "build_tree: required argument -o is missing, exiting"; build_tree_usage; exit 1
     elif [[ -z $REF_PATH ]] && [[ $FAST_TREE != true ]]; then 
         echo "build_tree: required argument -r is missing, exiting"; build_tree_usage; exit 1
+    elif [[ -z $LINKAGE ]]; then 
+        echo "build_tree: required argument --linkage is missing, exiting"; build_tree_usage; exit 1
+    elif [[ ! $LINKAGE =~ ^(threshold|cluster|tophits)$ ]]; then
+        echo "build_tree: invalid linkage method passed to the --linkage argument, exiting"; build_tree_usage; exit 1
+    elif [[ $LINKAGE =~ ^(threshold|tophits)$ ]] && [[ -z $CUTOFF ]]; then
+        echo "build_tree: required argument -c is missing, exiting"; build_tree_usage; exit 1
     fi
 
+    # initialize variables with default values
     if [[ -z $THREADS ]]; then THREADS=1; fi
-    if [[ -z $N_HITS ]]; then N_HITS=50; fi
+    if [[ $LINKAGE == threshold ]] && [[ -z $CUTOFF ]]; then CUTOFF=0.005; fi
+    if [[ $LINKAGE == tophits ]] && [[ -z $CUTOFF ]]; then CUTOFF=25; fi
+    if [[ $LINKAGE == cluster ]] && [[ -z $CUTOFF ]]; then CUTOFF=0; fi
 
     # call build_tree function
     if [[ $FAST_TREE == true ]]; then
         REF_PATH=empty
-        build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $N_HITS --fast_tree
+        build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $LINKAGE $CUTOFF --fast_tree
     else
-        build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $N_HITS
+        build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $LINKAGE $CUTOFF
     fi
 elif [[ $1 == "list" ]]; then
     shift 1

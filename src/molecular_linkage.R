@@ -10,13 +10,18 @@ suppressPackageStartupMessages(library(dbscan))
 # parse arguments
 args <- commandArgs(trailingOnly = T)
 
+# args[1] = input directory
+# args[2] = sample name
+# args[3] = output directory
+# args[4] = number of threads
+
 # set up parallel sessions
-plan(multisession, workers = args[4])
+plan(multisession, workers = as.numeric(args[4]))
 
 # read and pre-process dataframes
 read <- function(filename, kvalue) {
 	
-	df <- fread(filename, sep = "\t", header = F)
+	df <- fread(filename, sep = " ", header = F)
 	colnames(df) <- c("reference", "query", "dist", "pval", "jaccard")
 	
 	df <- df %>% 
@@ -31,10 +36,10 @@ read <- function(filename, kvalue) {
 	return(df)
 }
 
-# merge mash results with k=13,15,17,19,21,23
+# merge mash results with k=15,17,19,21,23,25
 load <- function(dir, sample_name) {
 	
-	k <- c(13,15,17,19,21,23)
+	k <- c(15,17,19,21,23,25)
 	df <- future_map_dfr(k, function(x) read(paste(paste(dir, sample_name, sep = "/"), x, "tsv", sep = "."), x))
 	
 	# identify irrelevant strains
@@ -42,6 +47,7 @@ load <- function(dir, sample_name) {
 		filter(kvalue == 21, 
 					 dist <= 0.01) %>% 
 		pull(reference)
+	
 	# filter irrelevant strains and create nested dataframes
 	df <- df %>% 
 		filter(reference %in% ref_ids) %>% 
@@ -112,11 +118,11 @@ optimize <- function(df) {
 		slice(1) %>% 
 		pull(minPts)
 	
-	p <- optimize_tbl %>% 
-		ggplot(aes(x = minPts, y = low_proportion)) +
-		geom_line()+
-		ylab("Fraction of Low Probability Assignments")+
-		xlab("minPts")
+	# p <- optimize_tbl %>% 
+	# 	ggplot(aes(x = minPts, y = low_proportion)) +
+	# 	geom_line()+
+	# 	ylab("Fraction of Low Probability Assignments")+
+	# 	xlab("minPts")
 	#ggsave(paste0(args[1], "/", args[2], "_optimization.png"), p)
 	
 	return(opt_minPts)
@@ -139,6 +145,7 @@ plot_cluster <- function(df, cutoff) {
 							 	filter(cluster != "0"),
 							 geom = "polygon",
 							 alpha = 0.2,
+							 level = 0.8,
 							 mapping = aes(x = core, y = accessory, color = cluster, fill = cluster)) +
 		geom_label(data = df %>% 
 							 	filter(cluster != "0") %>% 
@@ -156,8 +163,7 @@ plot_cluster <- function(df, cutoff) {
 					 fill = F) +
 		theme_minimal() #+
 	##scale_x_continuous(limits = c(0,0.001)) +
-	#scale_y_continuous(limits = c(0,0.05))
-	
+	#scale_y_continuous(limits = c(0,0.05))	
 	return(plot)
 }
 
@@ -222,19 +228,25 @@ output <- function(df, output_path) {
 }
 
 # main
-main <- function(dir, sample_name, out_dir) {
+main <- function(dir, sample_name, out_file) {
 	
 	tic()
 	# load data
-	message(paste("Loading mash results for", sample_name))
+	message(paste("molecular_linkage: Loading mash results for", sample_name))
 	mash_res <- load(dir, sample_name)
+	# check mash_res length; if 0 exit script
+	if (nrow(mash_res) == 0 ) { 
+		output(mash_res, out_file)
+		message("molecular_linkage: No relevant sequences found, exiting prematurely")
+		q()
+	}
 	# fit linear model
-	message("Fitting linear model")
+	message("molecular_linakge: Fitting linear model")
 	linear.fit <- future_map_chr(mash_res$data, ~linear_fit(.))
 	# compute accessory and core genome distances
 	mash_res <- compute(mash_res, linear.fit)
 	# identify optimal hyperparameters for hdbscan
-	message("Optimizing hyperparameters for clustering")
+	message("molecular_linkage Optimizing hyperparameters for clustering")
 	opt_minpts <- optimize(mash_res[c("core", "accessory")])
 	# cluster data using optimal parameters
 	cluster_res <- hdbscan(mash_res[c("core", "accessory")], minPts = opt_minpts)
@@ -243,11 +255,11 @@ main <- function(dir, sample_name, out_dir) {
 	cutoff <- threshold(mash_res)
 	# plot cluster assignments
 	p <- plot_cluster(mash_res, cutoff)
-	ggsave(paste0(out_dir, "/", sample_name, "_cluster_res.png"), p, width = 10, height = 10)
+	ggsave(paste0(dirname(out_file), "/../plots/", sample_name, "_cluster_res.png"), p, width = 10, height = 10)
 	# filter database
 	mash_res_filter <- database_filter(mash_res, cutoff)
 	# write out neighbour ids
-	output(mash_res_filter, paste0(out_dir, "/", sample_name, "_neighbours.list"))
+	output(mash_res_filter, out_file)
 	toc()
 }
 

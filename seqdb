@@ -191,7 +191,7 @@ seqdb_list() {
     # $1 path to database
 
     # call seqkit and print all sample names to screen
-    seqkit faidx -r $1 * | grep ">" | cut -f1 -d'|' | sort | uniq | sed 's/>//g'
+    cat $1 | grep ">" | cut -f1 -d' ' | sort | uniq | sed 's/>//g'
 }
 
 # identify sequences with molecular linkage to query
@@ -212,6 +212,17 @@ molecular_linkage() {
     fi
 }
 
+mash_sketch_db() {
+    
+    # $1 Sequence ID
+    # $2 Database path
+    # $3 k value
+    extract $1 $2 > $(dirname $2)/sketches/$1.fa # extract sequence and save as tmp file
+    echo "build_tree: Creating k = $3 sketch for $1"
+    mash sketch -k $3 -s 10000 $(dirname $2)/sketches/$1.fa -o $(dirname $2)/sketches/$1.$3 2> /dev/null
+    rm -rf $(dirname $2)/sketches/$1.fa # remove tmp file
+}
+
 # construct SNP tree from significant hits and query sequences
 build_tree() {
 
@@ -223,8 +234,16 @@ build_tree() {
     # $6    linkage method
     # $7    cutoff value
     # $8    run fast k-mer tree construction
-
+            
     # set up output dir structure
+            
+    # clean up
+    #if [[ $8 != "--fast_tree" ]]; then
+        # rm -rf $2/phame
+        # rm -rf $2/mash_res
+        # rm -rf $2/phame.ctl
+    #fi
+
     mkdir -p $2/mash_res
     mkdir -p $2/plots
     mkdir -p $2/phame/ref_dir
@@ -232,8 +251,34 @@ build_tree() {
 
     # search for linked sequences
     if test -f $1; then
-        if test -d $(dirname $3)/sketches; then
-            echo "build_tree from $1: Estimating k-mer distance..."
+      rm -rf $(dirname $3)/sketches # recreate mash sketches everytime
+      mkdir -p $(dirname $3)/sketches
+      if test -d $(dirname $3)/sketches; then
+            # recreate database index
+            rm -rf ${3}.fai
+            rm -rf ${3}.seqkit.fai
+            seqkit faidx -f $3
+
+            echo "build_tree: Generating k-mer profile for database sequences..."
+            db_seq=$(cat $3 | grep ">" | sed 's/ .*//g' | sed 's/>//g' | sort -u) # get all sample ids in DB
+
+            # create mash sketches for each sample in DB
+            # only create sketches at k=15:25 if linkage method is cluster
+            if [[ $6 == "cluster" ]]; then
+                k_array=(15 17 19 21 23 25)
+            else
+                k_array=( 21 )
+            fi
+            # do not recreate if already exists
+            for k in ${k_array[@]}; do
+                # export bash functions
+                export -f extract
+                export -f mash_sketch_db
+                # run mash sketch in parallel
+                echo $db_seq | tr ' ' '\n' | parallel -j $5 "mash_sketch_db {} $3 $k"
+            done
+            
+            echo "build_tree: Estimating k-mer distance..."
             while read lines; do                
                 if test -f $lines; then                
                     # get filename
@@ -251,17 +296,17 @@ build_tree() {
                                 fi
                             done
                             mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
-                        else
+                        else # not cluster
                             search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
                             mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
                         fi
-                    else
+                    else # not fast_tree
                         if [[ $6 == cluster ]]; then
                             k_array=(15 17 19 21 23 25)
                             for k in ${k_array[@]}; do                 
                                 search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
                             done
-                        else
+                        else # not cluster
                             search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21
                         fi
                     fi
@@ -288,21 +333,24 @@ build_tree() {
         echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
 
         # run SNP tree as default
-        if [[ $8 != --fast_tree ]]; then
+        if [[ $8 != "--fast_tree" ]]; then
             ## set up input directory for SNP tree
             # query
             while read lines; do
                 # get filename
                 filename=$(basename $lines)
+                if test -f $2/phame/work_dir/$filename; then
+                    rm $2/phame/work_dir/$filename
+                fi
                 ln -s $lines $2/phame/work_dir/$filename
             done < $1
 
             # database hits
-            if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
-                while read lines; do
-                    # get sequence from database
-                    extract $lines $3 > $2/phame/work_dir/$lines.fasta
-                done < $2/linked_sequences.list
+            echo "build_tree: Extracting database sequences for tree building..."
+            if [[ $(cat $2/linked_sequences.list | wc -l) -ne 0 ]]; then
+                # parellize the sequence extract process
+                export -f extract # export bash function
+                cat $2/linked_sequences.list | parallel -j $5 "extract {} $3 > $2/phame/work_dir/{}.fasta"
             fi
 
             # reference sequence
@@ -338,11 +386,16 @@ build_tree() {
             echo "build_tree: Constructing cgSNP tree..."
             phame $2/phame.ctl
 
+            if [[ $? != 0 ]]; then 
+                echo "build_tree: Tree construction failed, check for error(s) above"
+                exit 1
+            fi
+
             # write metadata file
             echo "ID,status__autocolor" > $2/metadata_microreact.csv
             while read lines; do
                 echo "${lines},reference" >> $2/metadata_microreact.csv
-            done < $2/db_top_hits.list
+            done < $2/linked_sequences.list
 
             while read lines; do
                 filename=$(basename $lines)
@@ -356,7 +409,7 @@ build_tree() {
             sed -i 's/\./_/g' $2/metadata_microreact.csv
             
             # clean up
-            mv $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
+            cp $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
             rm -rf $2/phame
             rm -rf $2/mash_res
             rm $2/phame.ctl
@@ -364,7 +417,7 @@ build_tree() {
             echo "build_tree: Tree file written to: $2/tree.nwk"
             echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
             echo "build_tree: Complete"
-        else
+        else  # fast_tree
             # Run K-mer distance tree
             # set up input directory for mash tree
             if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
@@ -438,10 +491,11 @@ search() {
                 if [[ $8 != --keep ]]; then rm $(dirname $4)/$1.$7.msh; fi
 
                 # reformat output
-                awk 'gsub(/.*\//, "", $1)' $4 > $4.tmp && mv $4.tmp $4
-                awk 'gsub(/.*\//, "", $2)' $4 > $4.tmp && mv $4.tmp $4
-                sed -e 's/.fasta//g' -e 's/.fna//g' -e 's/.fa//g' $4 > $4.tmp && mv $4.tmp $4
-                sort -gk3 $4 > $4.tmp && mv $4.tmp $4
+                awk 'gsub(/.*\//, "", $1)' $4 > $4.tmp && mv $4.tmp $4 # remove dir name in query
+                awk 'gsub(/.*\//, "", $2)' $4 > $4.tmp && mv $4.tmp $4 # remove dir name in subject (database seqs)
+                awk 'gsub(/\.[a-z]*$/, "", $1)' $4 > $4.tmp && mv $4.tmp $4 # remove the last extension in query path to get sample name
+                awk 'gsub(/\.[a-z]*$/, "", $2)' $4 > $4.tmp && mv $4.tmp $4 # remove the last extension in subject path to get sample name
+                sort -gk3 $4 > $4.tmp && mv $4.tmp $4 # sort by identity (column 3 in output file)
 
                 echo "search: Output written to: $4"
 
@@ -552,10 +606,10 @@ unbuild_db() {
 
     sed "s/\t/\|/g" < $1.fai | while read in; 
       do 
-        sample=${in%|*}
+        sample=${in% *}
         # eg. 1616822_Hp
-        id=${in#*|}
-        id=${id%%|*}  
+        id=${in#* }
+        id=${id%% *}  
         # eg. contig_1_segment0
 
         if [[ ! -d $2/$sample ]]; then
@@ -570,74 +624,98 @@ unbuild_db() {
 
 # build database
 build_db() {
-    # $1    input parent directory path (could be "none")
+
+    # $1    input parent directory path or path with fasta file
     # $2    output database path
 
     ## check integrity of input file structure
     echo "build_db: Checking integrity of input file structure..."
 
-    # directory
-    if [[ ! $1 == none ]]; then
-      if [[ ! -d $1 ]]; then
-        echo "build_db: Input path is not a directory, exiting"
-        exit 1
-      fi
-
-      # subfolders
-      samples_n=$(ls -d $1/*/ | wc -l)
-    
-      if [[ $samples_n -eq 0 ]]; then
-        echo "build_db: No subfolders found under ${1}, exiting"
-        exit 1
-      else
-        echo "build_db: Total samples found: $samples_n"
-      fi
-	fi
-	
-    ## construct sequence db    
-    echo "build_db: Constructing local sequence database..."
-
     # remove database if exists
-    if test -d $(dirname $2); then
+    if test -f $2; then
         echo "build_db: The specified output path exists, removing..."
-        rm -rf $2
+        rm $2
     fi
 
-    # mkdir $(dirname $2)
+    if test -d $(dirname $2)/sketches; then
+        rm -rf $(dirname $2)/sketches
+    fi
 
-    # if test -d $(dirname $2)/sketches; then
-    #     rm -rf $(dirname $2)/sketches
-    # fi
-
+    echo "build_db: Constructing local sequence database..."
     mkdir -p $(dirname $2)/sketches
 
-    if [[ ! $1 == none ]]; then
-	  for dir in $(ls -d $1/*/); do
-        # get sample id
-        sample_id=$(echo $(basename $dir))
+    # directory
+    if [[ ! -d $1 ]]; then
+        cat $1 >> $2
 
-        # check fasta file
-        if test -f $dir/$sample_id.fasta; then
-            # append sample ID to fasta headers and insert entry to database
-            cat $dir/$sample_id.fasta | sed "/>/ s/^>/>${sample_id}|/g" >> $2
-            # create kmer profiles for k = 15,17,19,21,23,25
-            k_array=(15 17 19 21 23 25)
-            for k in ${k_array[@]}; do
-                mash sketch -k $k -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id.${k} 2> /dev/null
-            done
-        else
-            echo "build_db: $sample_id.fasta not found under ${dir}, exiting"
-            rm -rf $2
-            rm -rf $(dirname $2)/sketches
-            exit 1
-        fi
+        #echo "build_db: Input path is not a directory, exiting"
+        #exit 1
+    else
+      # subfolders
+      samples_n=$(ls -d $1/*/ | wc -l)
+      
+      if [[ $samples_n -eq 0 ]]; then
+          echo "build_db: No subfolders found under ${1}, exiting"
+          exit 1
+      else
+          echo "build_db: Total samples found: $samples_n"
+      fi
+
+      ## construct sequence db    
+
+      for dir in $(ls -d $1/*/); do
+          # get sample id
+          sample_id=$(echo $(basename $dir))
+
+          # check fasta file
+          if test -f $dir/$sample_id.fasta; then
+              # append sample ID to fasta headers and insert entry to database
+              cat $dir/$sample_id.fasta | sed "/>/ s/^>/>${sample_id}|/g" >> $2
+              # create kmer profiles for k = 15,17,19,21,23,25
+              k_array=(15 17 19 21 23 25)
+              for k in ${k_array[@]}; do
+                  mash sketch -k $k -s 10000 $dir/$sample_id.fasta -o $(dirname $2)/sketches/$sample_id.${k} 2> /dev/null
+              done
+          else
+              echo "build_db: $sample_id.fasta not found under ${dir}, exiting"
+              rm -rf $2
+              rm -rf $(dirname $2)/sketches
+              exit 1
+          fi
       done
-    
-      # index sequence database    
-      seqkit faidx $2 # index
-	fi	
+    fi 
+
+    # index sequence database    
+    seqkit faidx -f $2 # index
 
     echo "build_db: Local sequence database built at $2"    
+}
+
+extract() {
+
+    # $1    Sample ID
+    # $2    Database path
+    
+    if test -f $2; then
+        # check sample ID
+        #if [[ $(seqkit faidx -r $2 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit grep -rp "${1}" $2 | grep ">" | wc -l) -eq 0 ]]; then
+            # 1>&2 redirect echo output to stderr
+            echo "extract: Query sample ID $1 not found, exiting" 1>&2
+            exit 1
+        else
+            if test -f $2; then
+                seqkit grep -rp "${1}" $2
+                #seqkit grep -rp $1 $2 | seqkit fx2tab | awk 'BEGIN{FS=OFS="\t"} {$1 = $1 OFS $1} 1' | awk 'BEGIN{FS=OFS="\t"} {gsub(/;.*/,"",$1); print}' | awk -v var="$1" '$1==var' | cut -f1 --complement -d$'\t' | seqkit tab2fx
+            else
+                echo "extract: Path to Database $2 does not exist, exiting" 1>&2
+                exit 1
+            fi
+        fi
+    else
+        echo "extract: Path to Database $2 does not exist, exiting" 1>&2
+        exit 1
+    fi
 }
 
 insert() {
@@ -649,7 +727,7 @@ insert() {
     if test -f $3; then
         # check sample ID
         #if [[ $(seqkit faidx -r $3 $1 | grep ">" | sed 's/;.*$//' | sed 's/>//' | awk -v var="$1" '$1==var' | wc -l) -eq 0 ]]; then
-        if [[ $(seqkit faidx -r $3 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit faidx -r $3 "${1}" | grep ">" | wc -l) -eq 0 ]]; then
             if test -f $2; then
                 
                 # sketch k-mer profile for insert
@@ -664,7 +742,7 @@ insert() {
                 fi
 
                 echo "insert: Inserting $1 from $2 into $3"
-                cat $2 | sed "/>/ s/^>/>$1|/g" >> $3
+                cat $2 | sed "/>/ s/^>/>$1 /g" >> $3
                 # Invalidate the index by deleting it.
                 rm $3.fai
 
@@ -696,7 +774,7 @@ remove() {
     # $2 Database path
 
     if test -f $2; then
-        if [[ $(seqkit faidx -r $2 "${1}\|" | grep ">" | wc -l) -eq 0 ]]; then
+        if [[ $(seqkit faidx -r $2 "${1}" | grep ">" | wc -l) -eq 0 ]]; then
             echo "remove: Query sample ID not found, exiting"
             exit 1
         else
@@ -708,7 +786,7 @@ remove() {
                 echo "remove: k-mer sketches directory is not found in the same directory as the input database at $(realpath $(dirname $3)), exiting"; exit 1
             fi
             
-            seqkit grep -v -rp "${1}\|" $2 > tmp.fasta
+            seqkit grep -v -rp "${1}" $2 > tmp.fasta
             # $2 gets set to zero length if redirected directly.
             mv tmp.fasta $2
             # Invalidate the index by deleting it.
@@ -743,7 +821,7 @@ elif [[ ! $1 =~ ^(extract|build_db|remove|replace|insert|unbuild_db|kipper|searc
     exit 1
 fi
 
-cd # Run from home directory.
+#cd # Run from home directory.
 
 ## check dependencies
 script_path=$(echo $(dirname $0))
@@ -767,12 +845,15 @@ if [[ $(echo $?) -ne 1 ]]; then
     echo "picard cannot be called, check its installation, exiting"
     exit 1
 fi
+
 # kipper
-${script_path}/kipper/kipper.py -h > /dev/null
-if [[ $(echo $?) -ne 0 ]]; then
-    echo "kipper cannot be called, check its installation, exiting"
-    exit 1
-fi
+# Jan-5-2022 [ab] kipper no longer used.
+#${script_path}/kipper/kipper.py -h > /dev/null
+#if [[ $(echo $?) -ne 0 ]]; then
+    #echo "kipper cannot be called, check its installation, exiting"
+    #exit 1
+#fi
+
 # phame
 phame -h > /dev/null
 if [[ $(echo $?) -ne 0 ]]; then

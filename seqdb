@@ -191,7 +191,7 @@ seqdb_list() {
     # $1 path to database
 
     # call seqkit and print all sample names to screen
-    cat $1 | grep ">" | cut -f1 -d' ' | sort | uniq | sed 's/>//g'
+    seqkit seq -ni $1 | sort -u
 }
 
 # identify sequences with molecular linkage to query
@@ -204,7 +204,7 @@ molecular_linkage() {
     # $5 number of threads
 
     if [[ $2 == threshold ]]; then
-        awk -v var=${3} '{ if ($3 <= $var) print $1 }' $1 > $4
+        awk -v var='$3' '{ if ($3 <= $var + 0) print $1 }' $1 > $4
     elif [[ $2 == tophits ]]; then
         head -n $3 $1 | cut -f1 -d' '> $4
     elif [[ $2 == cluster ]]; then
@@ -234,7 +234,7 @@ build_tree() {
     # $6    linkage method
     # $7    cutoff value
     # $8    run fast k-mer tree construction
-            
+    
     # set up output dir structure
             
     # clean up
@@ -243,220 +243,224 @@ build_tree() {
         # rm -rf $2/mash_res
         # rm -rf $2/phame.ctl
     #fi
+    echo "build_tree: Phylogenetics workflow initiated..."
+    echo "Workflow parameters:"
+    echo "Query list: $1"
+    echo "Output directory: $2"
+    echo "Database path: $3"
+    echo "Reference Seq: $4"
+    echo "Threads: $5"
+    echo "Linkage method: $6"
+    echo "Cutoff value: $7"
+    echo "Fast Tree: $8"
 
     mkdir -p $2/mash_res
     mkdir -p $2/plots
     mkdir -p $2/phame/ref_dir
     mkdir -p $2/phame/work_dir
 
-    # search for linked sequences
-    if test -f $1; then
-      rm -rf $(dirname $3)/sketches # recreate mash sketches everytime
-      mkdir -p $(dirname $3)/sketches
-      if test -d $(dirname $3)/sketches; then
-            # recreate database index
-            rm -rf ${3}.fai
-            rm -rf ${3}.seqkit.fai
-            seqkit faidx -f $3
+    # configure mash database
+    rm -rf $(dirname $3)/sketches # recreate mash sketches everytime
+    mkdir -p $(dirname $3)/sketches
+    if test -d $(dirname $3)/sketches; then
+        # recreate database index
+        rm ${3}.fai
+        rm ${3}.seqkit.fai
+        seqkit faidx -f $3
+        
+        echo "build_tree: Generating k-mer profile for database sequences..."
+        #db_seq=$(seqkit seq -ni $3 | sort -u) # get all unique sample ids in DB
 
-            echo "build_tree: Generating k-mer profile for database sequences..."
-            db_seq=$(cat $3 | grep ">" | sed 's/ .*//g' | sed 's/>//g' | sort -u) # get all sample ids in DB
-
-            # create mash sketches for each sample in DB
-            # only create sketches at k=15:25 if linkage method is cluster
-            if [[ $6 == "cluster" ]]; then
-                k_array=(15 17 19 21 23 25)
-            else
-                k_array=( 21 )
-            fi
-            # do not recreate if already exists
-            for k in ${k_array[@]}; do
-                # export bash functions
-                export -f extract
-                export -f mash_sketch_db
-                # run mash sketch in parallel
-                echo $db_seq | tr ' ' '\n' | parallel -j $5 "mash_sketch_db {} $3 $k"
-            done
-            
-            echo "build_tree: Estimating k-mer distance..."
-            while read lines; do                
-                if test -f $lines; then                
-                    # get filename
-                    filename=$(basename $lines)
-
-                    # estimate kmer distance
-                    if [[ $8 == --fast_tree ]]; then
-                        if [[ $6 == cluster ]]; then
-                            k_array=(15 17 19 21 23 25)
-                            for k in ${k_array[@]}; do
-                                if [[ $k -ne 21 ]]; then
-                                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
-                                else
-                                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
-                                fi
-                            done
-                            mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
-                        else # not cluster
-                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
-                            mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
-                        fi
-                    else # not fast_tree
-                        if [[ $6 == cluster ]]; then
-                            k_array=(15 17 19 21 23 25)
-                            for k in ${k_array[@]}; do                 
-                                search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
-                            done
-                        else # not cluster
-                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21
-                        fi
-                    fi
-
-                    # identify molecularly linked sequences
-                    if [[ $6 == cluster ]]; then
-                        molecular_linkage $2/mash_res/${filename%.*} $6 $7 $2/mash_res/${filename%.*}.hits $5
-                    else
-                        molecular_linkage $2/mash_res/${filename%.*}.tsv $6 $7 $2/mash_res/${filename%.*}.hits
-                    fi
-                else
-                    echo "build_tree: the following file from the input list $1 was not found, exiting"
-                    echo "$lines"
-                    echo "Make sure the $1 file is in Unix format, not Windows (may need to use dos2unix command to convert)."
-                    exit 1
-                fi
-            done < $1
+        # create mash sketches for each sample in DB
+        # only create sketches at k=15:25 if linkage method is cluster
+        if [[ $6 == "cluster" ]]; then
+            k_array=(15 17 19 21 23 25)
         else
-            echo "search: Mash sketches was not found in the same directory as the sequence database"; exit 1
+            k_array=( 21 )
+        fi
+        # do not recreate if already exists
+        for k in ${k_array[@]}; do
+            # export bash functions
+            export -f extract
+            export -f mash_sketch_db
+            # run mash sketch in parallel
+            #echo $db_seq | tr ' ' '\n' | parallel -j $5 "mash_sketch_db {} $3 $k"
+            seqkit seq -ni $3 | sort -u | parallel -j $5 "mash_sketch_db {} $3 $k"
+        done
+    else
+        echo "search: Mash sketches are not found in the same directory as the sequence database"; exit 1
+    fi
+
+    if test -f $1; then  
+    # search for linked sequences
+    # if query list exists, continue search
+    # otherwise skip search and build tree from the entire database sequence
+    echo "build_tree: Detected input query list $(realpath $1)"          
+    echo "build_tree: Estimating k-mer distance between query and database seqs..."
+    while read lines; do                
+        if test -f $lines; then                
+            # get filename
+            filename=$(basename $lines)
+
+            # estimate kmer distance
+            if [[ $8 == --fast_tree ]]; then
+                if [[ $6 == cluster ]]; then
+                    k_array=(15 17 19 21 23 25)
+                    for k in ${k_array[@]}; do
+                        if [[ $k -ne 21 ]]; then
+                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
+                        else
+                            search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
+                        fi
+                    done
+                    mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
+                else # not cluster
+                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21 --keep # only keep the 21-mer sketch for fast_tree construction
+                    mv $2/mash_res/${filename%.*}.21.msh $2/mash_res/${filename%.*}.msh # rename sketch file for fast_tree
+                fi
+            else # not fast_tree
+                if [[ $6 == cluster ]]; then
+                    k_array=(15 17 19 21 23 25)
+                    for k in ${k_array[@]}; do                 
+                        search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.$k.tsv 1 $5 $k
+                    done
+                else # not cluster
+                    search ${filename%.*} $lines $3 $2/mash_res/${filename%.*}.tsv 1 $5 21
+                fi
+            fi
+
+            # identify molecularly linked sequences
+            if [[ $6 == cluster ]]; then
+                molecular_linkage $2/mash_res/${filename%.*} $6 $7 $2/mash_res/${filename%.*}.hits $5
+            else
+                molecular_linkage $2/mash_res/${filename%.*}.tsv $6 $7 $2/mash_res/${filename%.*}.hits
+            fi
+            # consolidate linked sequences, keep unique sequences only
+            cat $2/mash_res/*.hits | sort -u | uniq > $2/linked_sequences.list
+            echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
+        else
+            echo "build_tree: the following file from the input list $1 was not found, exiting"
+            echo "$lines"
+            echo "Make sure the $1 file is in Unix format, not Windows (may need to use dos2unix command to convert)."
+            exit 1
+        fi
+    done < $1
+    # create linked_sequences.list from all seqs in db if no query list found
+    else
+    echo "build_tree: List of queries not found, building tree from the entire sequence database"
+    seqkit seq -ni $3 | sort -u > $2/linked_sequences.list        
+    fi
+
+    # run SNP tree as default
+    if [[ $8 != "--fast_tree" ]]; then
+        ## set up input directory for SNP tree
+        # query
+        if test -f $1; then
+        while read lines; do
+            # get filename
+            filename=$(basename $lines)
+            if test -f $2/phame/work_dir/$filename; then
+                rm $2/phame/work_dir/$filename
+            fi
+            ln -s $lines $2/phame/work_dir/$filename
+        done < $1
         fi
 
-        # consolidate linked sequences, keep unique sequences only
-        cat $2/mash_res/*.hits | sort -u | uniq > $2/linked_sequences.list
-        echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
+        # database hits
+        echo "build_tree: Extracting database sequences for tree building..."
+        if [[ $(cat $2/linked_sequences.list | wc -l) -ne 0 ]]; then
+            # parellize the sequence extract process
+            export -f extract # export bash function
+            cat $2/linked_sequences.list | parallel -j $5 "extract {} $3 > $2/phame/work_dir/{}.fasta"
+        fi
 
-        # run SNP tree as default
-        if [[ $8 != "--fast_tree" ]]; then
-            ## set up input directory for SNP tree
-            # query
+        # reference sequence
+        if test -f $4; then
+            ln -s $(realpath $4) $2/phame/ref_dir/$(basename $4)
+        else
+            echo "build_tree: Input reference sequence was not found, exiting"; exit 1
+        fi
+
+        ## set up phame.ctl file
+        echo "refdir = $(realpath $2)/phame/ref_dir" > $2/phame.ctl
+        echo "workdir = $(realpath $2)/phame/work_dir" >> $2/phame.ctl
+        echo "reference = 1" >> $2/phame.ctl
+        echo "reffile = $(basename $4)" >> $2/phame.ctl
+        echo "project = database_search" >> $2/phame.ctl
+        echo "cdsSNPS = 0" >> $2/phame.ctl
+        echo "buildSNPdb = 0" >> $2/phame.ctl
+        echo "SNPsfilter = 0.6" >> $2/phame.ctl
+        echo "FirstTime = 1" >> $2/phame.ctl
+        echo "data = 3" >> $2/phame.ctl
+        echo "reads = 1" >> $2/phame.ctl
+        echo "aligner = minimap2" >> $2/phame.ctl
+        echo "tree = 1" >> $2/phame.ctl
+        echo "bootstrap = 1" >> $2/phame.ctl
+        echo "N = 100" >> $2/phame.ctl
+        echo "PosSelect = 0" >> $2/phame.ctl
+        echo "code = 0" >> $2/phame.ctl
+        echo "clean = 1" >> $2/phame.ctl
+        echo "threads = $5" >> $2/phame.ctl
+        echo "cutoff = 0.1" >> $2/phame.ctl
+
+        # run phame
+        echo "build_tree: Constructing cgSNP tree..."
+        phame $2/phame.ctl
+
+        if [[ $? != 0 ]]; then 
+            echo "build_tree: Tree construction failed, check for error(s) above"
+            exit 1
+        fi
+
+    else  # fast_tree
+        # Run K-mer distance tree
+        # set up input directory for mash tree
+        if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
             while read lines; do
-                # get filename
-                filename=$(basename $lines)
-                if test -f $2/phame/work_dir/$filename; then
-                    rm $2/phame/work_dir/$filename
-                fi
-                ln -s $lines $2/phame/work_dir/$filename
-            done < $1
-
-            # database hits
-            echo "build_tree: Extracting database sequences for tree building..."
-            if [[ $(cat $2/linked_sequences.list | wc -l) -ne 0 ]]; then
-                # parellize the sequence extract process
-                export -f extract # export bash function
-                cat $2/linked_sequences.list | parallel -j $5 "extract {} $3 > $2/phame/work_dir/{}.fasta"
-            fi
-
-            # reference sequence
-            if test -f $4; then
-                ln -s $(realpath $4) $2/phame/ref_dir/$(basename $4)
-            else
-                echo "build_tree: Input reference sequence was not found, exiting"; exit 1
-            fi
-
-            ## set up phame.ctl file
-            echo "refdir = $(realpath $2)/phame/ref_dir" > $2/phame.ctl
-            echo "workdir = $(realpath $2)/phame/work_dir" >> $2/phame.ctl
-            echo "reference = 1" >> $2/phame.ctl
-            echo "reffile = $(basename $4)" >> $2/phame.ctl
-            echo "project = database_search" >> $2/phame.ctl
-            echo "cdsSNPS = 0" >> $2/phame.ctl
-            echo "buildSNPdb = 0" >> $2/phame.ctl
-            echo "SNPsfilter = 0.6" >> $2/phame.ctl
-            echo "FirstTime = 1" >> $2/phame.ctl
-            echo "data = 3" >> $2/phame.ctl
-            echo "reads = 1" >> $2/phame.ctl
-            echo "aligner = minimap2" >> $2/phame.ctl
-            echo "tree = 1" >> $2/phame.ctl
-            echo "bootstrap = 1" >> $2/phame.ctl
-            echo "N = 100" >> $2/phame.ctl
-            echo "PosSelect = 0" >> $2/phame.ctl
-            echo "code = 0" >> $2/phame.ctl
-            echo "clean = 1" >> $2/phame.ctl
-            echo "threads = $5" >> $2/phame.ctl
-            echo "cutoff = 0.1" >> $2/phame.ctl
-
-            # run phame
-            echo "build_tree: Constructing cgSNP tree..."
-            phame $2/phame.ctl
-
-            if [[ $? != 0 ]]; then 
-                echo "build_tree: Tree construction failed, check for error(s) above"
-                exit 1
-            fi
-
-            # write metadata file
-            echo "ID,status__autocolor" > $2/metadata_microreact.csv
-            while read lines; do
-                echo "${lines},reference" >> $2/metadata_microreact.csv
-            done < $2/linked_sequences.list
-
-            while read lines; do
-                filename=$(basename $lines)
-                echo "${filename%.*},query" >> $2/metadata_microreact.csv
-            done < $1
-
-            echo "$(basename ${4%.*}),reference sequence" >> $2/metadata_microreact.csv
-
-            # sync sample names in metadata with names used in tree file
-            sed -i 's/-/_/g' $2/metadata_microreact.csv
-            sed -i 's/\./_/g' $2/metadata_microreact.csv
+                ln -s $(dirname $(realpath $3))/sketches/$lines.21.msh $2/mash_res/$lines.msh
             
-            # clean up
-            cp $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk
-            rm -rf $2/phame
-            rm -rf $2/mash_res
-            rm $2/phame.ctl
-
-            echo "build_tree: Tree file written to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
-            echo "build_tree: Complete"
-        else  # fast_tree
-            # Run K-mer distance tree
-            # set up input directory for mash tree
-            if [[ $(wc -l $2/linked_sequences.list | cut -f1 -d' ') -ne 0 ]]; then
-                while read lines; do
-                    ln -s $(dirname $(realpath $3))/sketches/$lines.21.msh $2/mash_res/$lines.msh
-                
-                    # Create copies of real files if this is in the Windows file system.
-                    #cp $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
-                done < $2/linked_sequences.list
-            fi
-
-            # run mashtree
-            echo "build_tree: Constructing k-mer distance tree..."            
-            mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk
-
-            # write metadata file
-            echo "ID,status__autocolor" > $2/metadata_microreact.csv
-            while read lines; do
-                echo "${lines},reference" >> $2/metadata_microreact.csv
+                # Create copies of real files if this is in the Windows file system.
+                #cp $(realpath $(dirname $3))/sketches/$lines.msh $2/mash_res/$lines.msh
             done < $2/linked_sequences.list
+        fi
 
-            while read lines; do
-                filename=$(basename $lines)
-                echo "${filename%.*},query" >> $2/metadata_microreact.csv
-            done < $1
+        # run mashtree
+        echo "build_tree: Constructing k-mer distance tree..."            
+        mashtree --numcpus $5 $2/mash_res/*.msh > $2/tree.nwk
+    fi    
 
-            # clean up
-            rm -rf $2/mash_res
-            rm -rf $2/phame
+    # write metadata file
+    echo "build_tree: Writing metadata file..."
+    echo "ID,status" > $2/metadata_microreact.csv # header line
+    while read lines; do
+        echo "${lines},reference" >> $2/metadata_microreact.csv
+    done < $2/linked_sequences.list
 
-            echo "build_tree: Tree file written to: $2/tree.nwk"
-            echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
-            echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
-            echo "build_tree: Complete"
-        fi        
+    if test -f $1; then
+    while read lines; do
+        filename=$(basename $lines)
+        echo "${filename%.*},query" >> $2/metadata_microreact.csv
+    done < $1
+    fi
 
-    else
-        echo "build_tree: Input list was not found, exiting"; exit 1
-    fi   
+    # sync sample names in metadata with names used in tree file
+    # phame converts - or . characters in sample names to _
+    if [[ $8 != "--fast_tree" ]]; then
+    sed -i 's/-/_/g' $2/metadata_microreact.csv
+    sed -i 's/\./_/g' $2/metadata_microreact.csv
+    fi
+
+    # clean up
+    if test -f $2/phame/work_dir/results/trees/*.fasttree; then cp $2/phame/work_dir/results/trees/*.fasttree $2/tree.nwk; fi
+    if test -f $2/phame; then rm -r $2/mash_res; fi
+    if test -f $2/phame; then rm -r $2/phame; fi    
+    if test -f $2/phame.ctl; then rm $2/phame.ctl; fi
+
+    # print completion message
+    echo "build_tree: Tree file written to: $2/tree.nwk"
+    echo "build_tree: Microreact metadata file written to: $2/metadata_microreact.csv"
+    echo "build_tree: $(wc -l $2/linked_sequences.list | cut -f1 -d' ') sequences found linked to query dataset"
+    echo "build_tree: Complete"
 }
 
 # search database for hits
@@ -1182,7 +1186,7 @@ elif [[ $1 == "build_tree" ]]; then
         build_tree_usage
         exit 0
     fi
-    opts=`getopt -o hd:l:o:t:r:n:c: -l help,db:,list:,output:,threads:,reference:,fast_tree,linkage:,cutoff: -- "$@"`
+    opts=`getopt -o hd:l:o:t:r:n:c: -l help,db:,list:,output:,threads:,reference:,fast_tree,linkage:,cutoff:,include_all -- "$@"`
     eval set -- "$opts"
     if [ $? != 0 ] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
     if [[ $1 =~ ^--$ ]] ; then echo "build_tree: Invalid arguments used, exiting"; build_tree_usage; exit 1 ; fi
@@ -1197,33 +1201,32 @@ elif [[ $1 == "build_tree" ]]; then
             --linkage) LINKAGE=$2; shift 2;;
             --fast_tree) FAST_TREE=true; shift 1;;
             -c|--cutoff) CUTOFF=$2; shift 2;;
+            --include_all) ALL=true; shift 1;;
             --) shift; break ;;
             -h|--help) build_tree_usage; exit 0;;
         esac
     done
 
     # check if required arguments present
-    if [[ -z $INPUT_LIST ]]; then 
-        echo "build_tree: required argument -l is missing, exiting"; build_tree_usage; exit 1
-    elif [[ -z $DB_PATH ]]; then
-        echo "build_tree: required argument -d is missing, exiting"; build_tree_usage; exit 1
-    elif [[ -z $OUTPUT_DIR ]]; then 
-        echo "build_tree: required argument -o is missing, exiting"; build_tree_usage; exit 1
-    elif [[ -z $REF_PATH ]] && [[ $FAST_TREE != true ]]; then 
-        echo "build_tree: required argument -r is missing, exiting"; build_tree_usage; exit 1
-    elif [[ -z $LINKAGE ]]; then 
-        echo "build_tree: required argument --linkage is missing, exiting"; build_tree_usage; exit 1
-    elif [[ ! $LINKAGE =~ ^(threshold|cluster|tophits)$ ]]; then
-        echo "build_tree: invalid linkage method passed to the --linkage argument, exiting"; build_tree_usage; exit 1
-    elif [[ $LINKAGE =~ ^(threshold|tophits)$ ]] && [[ -z $CUTOFF ]]; then
-        echo "build_tree: required argument -c is missing, exiting"; build_tree_usage; exit 1
+    if [[ -z $DB_PATH ]]; then echo "build_tree: required argument -d is missing, exiting"; build_tree_usage; exit 1; fi
+    if [[ -z $OUTPUT_DIR ]]; then echo "build_tree: required argument -o is missing, exiting"; build_tree_usage; exit 1; fi
+    # ref path is required if not invoking --fast_tree
+    if [[ -z $REF_PATH ]] && [[ $FAST_TREE != true ]]; then echo "build_tree: required argument -r is missing, exiting"; build_tree_usage; exit 1; fi
+    # linkage option is required if input list is provided and --include-all is not invoked
+    if [[ -f $INPUT_LIST ]] && [[ $ALL != 'true' ]]; then
+        if [[ -z $LINKAGE ]]; then echo "build_tree: required argument --linkage is missing, exiting"; build_tree_usage; exit 1; fi
+        if [[ ! $LINKAGE =~ ^(threshold|cluster|tophits)$ ]]; then echo "build_tree: invalid linkage method passed to the --linkage argument, exiting"; build_tree_usage; exit 1; fi
+        # if linkage option is either threshold/tophits, cutoff value is required
+        if [[ $LINKAGE =~ ^(threshold|tophits)$ ]] && [[ -z $CUTOFF ]]; then echo "build_tree: required argument -c is missing, exiting"; build_tree_usage; exit 1; fi
     fi
-
+    
     # initialize variables with default values
     if [[ -z $THREADS ]]; then THREADS=1; fi
     if [[ $LINKAGE == threshold ]] && [[ -z $CUTOFF ]]; then CUTOFF=0.005; fi
     if [[ $LINKAGE == tophits ]] && [[ -z $CUTOFF ]]; then CUTOFF=25; fi
     if [[ $LINKAGE == cluster ]] && [[ -z $CUTOFF ]]; then CUTOFF=0; fi
+    if [[ $ALL == true ]]; then CUTOFF=1; LINKAGE=threshold; fi
+    if [[ -z $INPUT_LIST ]] || [[ ! -f $INPUT_LIST ]]; then INPUT_LIST=empty; LINKAGE=empty; CUTOFF=empty; fi
 
     # call build_tree function
     if [[ $FAST_TREE == true ]]; then
@@ -1232,6 +1235,7 @@ elif [[ $1 == "build_tree" ]]; then
     else
         build_tree $INPUT_LIST $OUTPUT_DIR $DB_PATH $REF_PATH $THREADS $LINKAGE $CUTOFF
     fi
+
 elif [[ $1 == "list" ]]; then
     shift 1
     if [[ $# -eq 0 ]]; then
